@@ -1,82 +1,70 @@
-import os
-import time
-import redis
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+import time
+import logging
+from redis import Redis
 
 class RateLimiter:
     """
-    Redis-based Rate Limiter for AI Providers.
-    Manages daily quotas with auto-reset at midnight.
-    Reference: Neural-Home Infrastructure Blueprint v3.0 - Phase 3
+    Distributed Token Bucket Rate Limiter using Redis.
+    Reference: Neural-Home Infrastructure Blueprint v3.0 - Sec 4.3
     """
-    
-    # Default limits (requests per day) - can be overridden by config
-    DEFAULT_LIMITS = {
-        "gemini": 1500,
-        "groq": 1000,
-        "qwen": 1000, # Cloud provider placeholder
-        "ollama": 100000 # Local model, virtually unlimited
-    }
-    
-    def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0):
-        # Allow override from env
-        self.redis_host = os.getenv("REDIS_HOST", redis_host)
-        self.redis_port = int(os.getenv("REDIS_PORT", redis_port))
-        self.redis_client = redis.Redis(
-            host=self.redis_host, 
-            port=self.redis_port, 
-            db=redis_db, 
-            decode_responses=True
-        )
+    def __init__(self, redis_client: Redis):
+        self.redis = redis_client
+        # Default Limits: (tokens, replenish_rate_per_minute)
+        self.default_limits = {
+            "global": (1000, 60),       # 1000 burst, 1/sec
+            "expensive": (50, 5),       # 50 burst, 1/12sec (e.g. GPT-4)
+            "cheap": (2000, 120)        # 2000 burst, 2/sec (e.g. Ollama)
+        }
 
-    def _get_key(self, provider):
-        """Generate a daily key for the provider, e.g., quota:gemini:2026-01-20"""
-        today = datetime.now().strftime("%Y-%m-%d")
-        return f"quota:{provider}:{today}"
-
-    def get_limit(self, provider):
-        """Get the defined limit for a provider."""
-        # In a real scenario, this could fetch from a dynamic config or Redis Config
-        return self.DEFAULT_LIMITS.get(provider, 1000)
-
-    def check_limit(self, provider):
+    def check_limit(self, key: str, cost: int = 1, limit_type: str = "global") -> bool:
         """
-        Check if the provider has remaining quota for today.
-        Returns: True if request is allowed, False if limit exceeded.
+        Consumes tokens from the bucket. Returns True if allowed, False if limited.
         """
-        key = self._get_key(provider)
-        current_usage = self.redis_client.get(key)
+        max_tokens, rate_per_min = self.default_limits.get(limit_type, self.default_limits["global"])
+        rate_per_sec = rate_per_min / 60.0
         
-        if current_usage is None:
+        bucket_key = f"limiter:{key}:{limit_type}"
+        last_check_key = f"limiter:{key}:{limit_type}:ts"
+        
+        # Redis Lua Script for Atomicity
+        # ARGV[1]: max_tokens
+        # ARGV[2]: rate_per_sec
+        # ARGV[3]: current_timestamp
+        # ARGV[4]: cost
+        lua_script = """
+        local bucket_key = KEYS[1]
+        local ts_key = KEYS[2]
+        local max_tokens = tonumber(ARGV[1])
+        local rate = tonumber(ARGV[2])
+        local now = tonumber(ARGV[3])
+        local cost = tonumber(ARGV[4])
+
+        local current_tokens = tonumber(redis.call('get', bucket_key) or max_tokens)
+        local last_ts = tonumber(redis.call('get', ts_key) or now)
+
+        -- Replenish tokens
+        local delta = math.max(0, now - last_ts)
+        local new_tokens = math.min(max_tokens, current_tokens + (delta * rate))
+
+        if new_tokens >= cost then
+            -- Consume
+            redis.call('set', bucket_key, new_tokens - cost)
+            redis.call('set', ts_key, now)
+            -- Set expiry to avoid stale keys (e.g. 1 hour)
+            redis.call('expire', bucket_key, 3600)
+            redis.call('expire', ts_key, 3600)
+            return 1 -- Allowed
+        else
+            return 0 -- Rejected
+        end
+        """
+        
+        try:
+            result = self.redis.eval(lua_script, 2, bucket_key, last_check_key, 
+                                   max_tokens, rate_per_sec, time.time(), cost)
+            return bool(result)
+        except Exception as e:
+            logging.error(f"Rate Limiter Error: {e}")
+            # Fail open (allow request) if Redis fails
             return True
-            
-        limit = self.get_limit(provider)
-        return int(current_usage) < limit
-
-    def increment_usage(self, provider):
-        """
-        Increment the usage counter for the provider.
-        Sets TTL to expire at midnight + buffer if key is new.
-        """
-        key = self._get_key(provider)
-        pipe = self.redis_client.pipeline()
-        pipe.incr(key)
-        
-        # Set expiry if it's a new key (TTL until end of day)
-        if self.redis_client.ttl(key) == -1:
-            now = datetime.now()
-            tomorrow = datetime.replace(now + timedelta(days=1), hour=0, minute=0, second=0, microsecond=0)
-            seconds_until_midnight = int((tomorrow - now).total_seconds())
-            pipe.expire(key, seconds_until_midnight + 3600) # +1 hour buffer
-            
-        pipe.execute()
-        
-    def get_usage(self, provider):
-        """Return current usage for the day."""
-        key = self._get_key(provider)
-        val = self.redis_client.get(key)
-        return int(val) if val else 0

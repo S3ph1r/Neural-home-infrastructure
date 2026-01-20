@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from google import genai
 from google.genai import types
+from .rate_limiter import RateLimiter
 
 # --- CONFIGURAZIONE ---
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -79,6 +80,7 @@ JUDGE_MODELS = ["models/gemma-3-4b-it", "models/gemini-2.0-flash-lite"]
 
 app = FastAPI()
 r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+limiter = RateLimiter(r)
 google_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
 current_mode = "AUTO"
@@ -147,6 +149,16 @@ async def chat_proxy(request: Request):
     full_messages = body.get("messages", [])
     is_stream = body.get("stream", False)
     req_model = body.get("model", "qwen-max")
+
+    # 0. Rate Limiting Check
+    if limiter:
+        # Determine cost/type based on provider
+        limit_type = "cheap"
+        if "gpt-4" in req_model.lower() or "claude" in req_model.lower(): 
+            limit_type = "expensive"
+        
+        if not limiter.check_limit("global_user", cost=1, limit_type=limit_type):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Slow down.")
 
     # 1. Estrazione domanda pulita
     raw_query = next((m["content"] for m in reversed(full_messages) if m["role"] == "user"), "")
