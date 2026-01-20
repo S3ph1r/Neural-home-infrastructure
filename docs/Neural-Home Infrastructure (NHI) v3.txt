@@ -1,0 +1,4959 @@
+Neural-Home Infrastructure (NHI) v3.0
+Blueprint Architetturale Completo - Design Document
+Version:
+3.0 (Self-Aware, Distributed & Resilient)
+Date:
+Gennaio 2026
+Status:
+Production-Ready Design
+Philosophy:
+Open Source First, Cost-Free Operations
+📋 Indice
+1.
+Visione e Filosofia
+2.
+Topologia Hardware
+3.
+Architettura del Sistema di Stato
+4.
+Layer di Orchestrazione AI
+5.
+Sistema di Gestione delle Risorse GPU
+6.
+Modello di Sicurezza e Permessi
+7.
+Resilienza e Disaster Recovery
+8.
+Observability e Monitoring
+9.
+Gestione della Concorrenza
+10.
+Roadmap di Implementazione
+1. Visione e Filosofia
+1.1 Obiettivo Primario
+Creare un'infrastruttura di laboratorio AI
+autoconsapevole
+che permette a multipli agenti AI (Aider, OpenInterpreter, Google Antigravity) di collaborare senza conflitti, mantenendo sempre una visione accurata eaggiornata dello stato reale del sistema. L'infrastruttura deve essere
+cost-effective
+(zero costi operativiricorrenti) e
+resiliente
+(capacità di recupero automatico da fallimenti).
+1.2 Principi Architetturali Fondamentali
+Single Source of Truth (SSOT)
+Problema risolto:
+Le AI generative tendono a "allucinare" indirizzi IP, porte, nomi di servizi quando non hannoinformazioni concrete. Questo porta a comandi SSH verso host inesistenti, connessioni a database sbagliati, opeggio, tentativi di modificare servizi critici con parametri inventati.
+Soluzione:
+Un singolo file JSON (
+infrastructure/state.json
+) descrive deterministicamente l'intera infrastruttura.Ogni AI, prima di compiere qualsiasi azione,
+deve
+leggere questo file. Non esistono "IP da indovinare" o"configurazioni implicite".
+Perché JSON e non YAML/TOML:
+Parsing nativo in tutti i linguaggi
+Validazione schema tramite JSON Schema (standard)
+Facile manipolazione via
+jq
+da shell script
+Le AI hanno capacità migliori di comprensione JSON rispetto a YAML
+Alternative considerate:
+Consul/etcd:
+Troppo complesso per setup locale, richiede cluster
+Database relazionale:
+Aggiunge dipendenza, richiede ORM, più lento per letture massive
+Git come database:
+Considerato, ma i merge conflict sarebbero un incubo con scritture concorrenti
+Fail-Safe Operations
+Problema risolto:
+Un'AI potrebbe eseguire
+proxmox destroy-vm 100
+(la VM Brain stessa) per errore, causandoil collasso dell'intero sistema. O creare 50 VM in loop esaurendo le risorse.
+Soluzione:
+Ogni operazione "distruttiva" ha tre livelli di protezione:
+1.
+Dry-run mode obbligatorio:
+Prima simulazione, poi esecuzione
+2.
+Snapshot automatico dello stato:
+Prima di modifiche infrastrutturali
+3.
+Rollback automatico:
+Se l'operazione fallisce o lo stato diventa inconsistente
+Perché questo approccio:
+Le AI sono strumenti potentissimi ma non deterministici. Un bug in un prompt puòcausare danni irreversibili. La filosofia è: "Fidarsi delle AI per automazione, non fidarsi ciecamente perdecisioni irreversibili".
+Cost Optimization & Free-Tier First
+Problema risolto:
+I piani free dei provider AI hanno rate limit giornalieri (es. Claude: 1000 req/giorno, Gemini:1500 req/giorno). Superarli significa pagare o rimanere bloccati.
+Soluzione:
+Un orchestratore intelligente che:
+1.
+Traccia le quote residue in tempo reale
+2.
+Routare richieste verso provider con quota disponibile
+3.
+Fallback su GPU locale quando tutti i provider sono esauriti
+4.
+Bilanciamento predittivo per distribuire carico nell'arco della giornata
+Perché è critico:
+Con 3-4 AI agents attivi (Aider che fa refactoring, Open Interpreter che gestisce infra,Antigravity per sviluppo), si possono facilmente fare 2000+ richieste al giorno. Senza orchestrazione, sisaturano tutti i provider entro mezzogiorno.
+Alternative considerate:
+Solo GPU locale:
+Buona soluzione ma latenza alta (30-60s per risposta) e impossibile usare PC pergaming
+Pagare API:
+Non sostenibile per uso intensivo (~$50-200/mese)
+Self-hosted LLM su Proxmox:
+CPU-only troppo lento, nessuna GPU disponibile
+AI-First Design
+Problema risolto:
+Configurare Kubernetes, Terraform, Ansible richiede competenze DevOps avanzate esintassi complessa. Le AI faticano a gestire questi tool correttamente.
+Soluzione:
+L'infrastruttura si configura tramite
+linguaggio naturale
+. Gli script wrapper traducono intent inazioni. Esempio:
+Umano:
+"Ho bisogno di un database Redis per caching"
+AI legge stato → Esegue:
+manage_proxmox.py create --template redis --purpose cache
+Sistema crea VM → Aggiorna state.json → Notifica AI:
+"Redis disponibile su 192.168.1.105:6379"
+Perché funziona:
+Le AI eccellono nella comprensione del linguaggio naturale e nella generazione di comandiparametrizzati. Falliscono nella gestione di sintassi complessa multi-file (HCL, YAML Ansible).
+2. Topologia Hardware
+2.1 Nodo A: "The Muscle" (PC Gaming)
+Specifiche Hardware
+CPU:
+AMD Ryzen 5 1600 (6 core / 12 thread, architettura Zen 1)
+RAM:
+32GB DDR4
+Storage Primario:
+1TB SSD NVMe (sistema operativo + modelli LLM)
+Storage Secondario:
+Multi-TB HDD (dataset, backup locali)
+GPU:
+NVIDIA RTX 5060 Ti 16GB VRAM (Architettura Ada Lovelace)
+Configurazione Software
+OS Primario:
+Windows 11 (per gaming)
+OS Secondario:
+WSL2 Ubuntu 22.04 (per inference workload)
+Container Runtime:
+Docker Desktop per Windows (condiviso con WSL2)
+Servizi Attivi
+Google Antigravity IDE
+Ruolo:
+Ambiente di sviluppo principale per scrittura codice.
+Configurazione Connessione:
+Modalità:
+Remote SSH verso VM Brain (192.168.1.100)
+Workspace:
+/home/user/neural-home-repo/
+(il monorepo completo)
+Context Awareness:
+File
+.antigravity/context.md
+nella root contiene istruzioni permanenti tipo:
+Perché Antigravity via SSH remoto:
+Tutto il codice vive sulla VM Brain (unica fonte di verità)
+Le modifiche sono immediatamente visibili a Open Interpreter e Aider
+Nessun problema di sincronizzazione file tra nodi
+La GPU del PC è libera per inference mentre sviluppo
+Local Inference Worker
+Stack Tecnologico:
+Opzione A:
+Ollama (più semplice, meno configurabile)
+Opzione B:
+Text Generation WebUI (Oobabooga - più flessibile)
+Modelli Caricati:
+Principale:
+Qwen2.5-32B-Instruct-GGUF (quantizzazione Q4_K_M, ~14GB VRAM)
+Fallback Veloce:
+Llama-3.1-8B-Instruct-GGUF (quantizzazione Q6_K, ~6GB VRAM)
+Endpoint API:
+"Prima di ogni operazione che coinvolge servizi remoti,
+leggi infrastructure/state.json per ottenere IP e porte corretti.
+Non inventare mai indirizzi o configurazioni."
+HTTP REST:
+http://192.168.1.50:5000/v1/completions
+(compatibile OpenAI)
+WebSocket:
+ws://192.168.1.50:5000/api/v1/stream
+(per streaming)
+Perché due modelli:
+32B model:
+Alta qualità per task complessi (code review, debugging, analisi)
+8B model:
+Risposte rapide per task semplici (auto-complete, quick answers)
+Limitazioni architetturali:
+Latenza:
+30-60 secondi per generazione complessa
+Context Window:
+32K token max (vs 200K di Claude/Gemini)
+Disponibilità:
+Solo quando PC non in uso gaming
+GPU Semaphore Service
+Problema risolto:
+Come fa l'orchestratore a sapere se il PC è disponibile o se sto giocando?
+Architettura:
+Un semplice script Python che gira come servizio systemd (o Task Scheduler su Windows) che:
+1.
+Monitora ogni 30 secondi:
+Processo fullscreen attivo (gioco in corso)
+Temperatura GPU > 70°C (inference pesante in corso)
+Carico GPU > 50% per più di 5 minuti
+Presenza di connessione RDP/VNC (qualcuno sta usando il PC)
+2.
+Scrive stato su Redis:
+3.
+Gestisce Code di Richieste:
+Quando lo stato diventa "green", processa richieste dalla coda
+LPOP gpu_queue
+.
+Perché Redis come semaforo:
+Atomic operations:
+SET/GET sono atomici, nessuna race condition
+Pub/Sub support:
+Può notificare orchestratore quando stato cambia
+TTL automatico:
+Se il servizio crasha, la chiave scade e diventa "red" (fail-safe)
+Zero config:
+Redis è già sulla VM Brain per altri scopi
+SET semaphore:gpu "green" # Libero
+SET semaphore:gpu "yellow" # In uso ma basso carico
+SET semaphore:gpu "red" # Occupato
+Alternative considerate:
+File condiviso NFS:
+Problemi di caching e locking
+HTTP polling:
+Overhead maggiore, latenza discovery
+WebSocket permanente:
+Complesso da mantenere attraverso NAT
+2.2 Nodo B: "The Host" (MiniPC Proxmox)
+Specifiche Hardware
+CPU:
+AMD Ryzen 5 7430U (6 core / 12 thread, TDP 15W, architettura Zen 3)
+RAM:
+32GB DDR5-4800
+Storage:
+1TB NVMe SSD (PCIe 4.0)
+Networking:
+Gigabit Ethernet (bridge alla LAN domestica)
+Consumo:
+~8-12W idle, ~25W full load (177 kWh/anno @ 12W = ~35€/anno in Italia)
+Perché questo hardware:
+Low power:
+Può rimanere acceso 24/7 senza costi energetici proibitivi
+Sufficiente RAM:
+32GB permettono 4-5 VM/LXC simultanee con overhead Proxmox
+CPU moderno:
+Zen 3 ha supporto AVX2 necessario per alcuni workload ML (embeddings)
+Hypervisor: Proxmox VE 8.x
+Perché Proxmox invece di alternative:
+Feature
+Proxmox
+VMware ESXi Free
+Hyper-V
+XCP-ng
+API REST completa
+✅ Sì
+❌ Limitata
+❌ PowerShell only
+✅ Sì
+LXC containers
+✅ Sì
+❌ No
+❌ No
+❌ No
+Web UI completa
+✅ Sì
+⚠️
+Limitata (free)
+⚠️
+Basica
+✅ Sì
+Backup integrato
+✅ Sì
+❌ No
+⚠️
+Manuale
+✅ Sì
+Costo licenza
+🆓 Free
+🆓 Free
+💰 €€ (per tutte feature)
+🆓 Free
+Community support
+✅ Enorme
+⚠️
+Media
+✅ Grande
+⚠️
+Piccola
+Caratteristiche chiave per il progetto:
+1.
+API
+/api2/json/
+: Le AI possono creare/distruggere/interrogare VM programmaticamente
+2.
+LXC support
+: Container ultra-leggeri (50MB RAM vs 512MB VM) per microservizi
+3.
+Snapshot incrementali
+: Backup veloce senza fermare servizi
+4.
+Storage flessibile
+: LVM-thin per overprovisioning (posso allocare 500GB su 10 VM anche se ho 1TBfisico)
+Architettura delle VM/LXC
+VM 100: "Brain" - Control Plane
+Risorse Allocate:
+vCPU: 4 core (50% del totale)
+RAM: 8GB (25% del totale)
+Disk: 100GB (thin provisioned)
+Network: vmbr0 (bridge LAN), IP statico 192.168.1.100
+OS:
+Ubuntu Server 22.04 LTS (supporto fino 2027)
+Ruolo Critico:
+Questa VM è il "cervello" del sistema. Se crasha, l'intera infrastruttura diventa opaca (non c'èpiù il file
+state.json
+aggiornato). Per questo ha priorità massima su risorse.
+Servizi Essenziali:
+1.
+Git Server Locale:
+Tool:
+Gitea (self-hosted, 50MB RAM)
+Perché serve:
+Backup versionato del monorepo, accesso web per review codice
+Alternative:
+GitLab (troppo pesante, 4GB RAM), GitHub (dipendenza esterna)
+2.
+Redis Server:
+Versione:
+Redis 7.x (no Redis Stack per mantenere leggerezza)
+Uso:
+Semaforo GPU (chiave
+semaphore:gpu
+)
+Code di richieste (lista
+gpu_queue
+)
+Rate limiter API providers (hash
+api_quota:*
+)
+Cache temporanea metadata infra
+Persistenza:
+RDB snapshot ogni 5 minuti + AOF (Append-Only File)
+Perché Redis:
+Velocissimo (100k ops/sec), strutture dati atomiche, TTL automatici
+3.
+Cron Scheduler:
+Job principali:
+*/5 * * * *
+→ Infrastructure scan (aggiorna state.json)
+0 * * * *
+→ Snapshot backup state history
+0 2 * * *
+→ Cleanup snapshot vecchi (>7 giorni)
+*/15 * * * *
+→ Health check proattivo (invia alert se servizi down)
+4.
+SSH Jump Host:
+Tutte le VM/LXC sono accessibili solo tramite Brain
+Configurazione
+~/.ssh/config
+con ProxyJump automatico
+Sicurezza:
+Limita superficie di attacco, centralizza audit log
+Backup Strategy:
+Proxmox Backup Server (PBS):
+Snapshot giornaliero alle 2 AM
+Git auto-push:
+Ogni commit del monorepo viene pushato su GitHub privato
+State.json → MinIO:
+Ogni ora, upload su object storage (vedi LXC 104)
+LXC 101: "ChromaDB" - Vector Database
+Risorse:
+RAM: 4GB
+CPU: 2 vCPU
+Disk: 50GB
+IP: 192.168.1.101
+Software:
+ChromaDB:
+Open-source vector database (alternativa a Pinecone/Weaviate)
+Versione:
+0.4.x (ultima stabile)
+Storage Backend:
+SQLite (semplice) o DuckDB (performance)
+Caso d'uso:
+RAG (Retrieval Augmented Generation):
+Le AI cercano documentazione/codice simile prima dirispondere
+Semantic Search:
+"Trova tutti i servizi che dipendono da PostgreSQL"
+Embedding Storage:
+Vettori generati da modelli tipo
+all-MiniLM-L6-v2
+Endpoint API:
+GET /api/v1/collections
+→ Lista collezioni
+POST /api/v1/collections/{name}/query
+→ Ricerca vettoriale
+GET /api/v1/heartbeat
+→ Health check
+Perché ChromaDB invece di alternative:
+Qdrant:
+Più performante ma richiede 2-3GB RAM extra (Rust overhead)
+Milvus:
+Troppo complesso, richiede etcd + MinIO + Pulsar
+Weaviate:
+Ottimo ma 8GB RAM minimo
+PostgreSQL + pgvector:
+Considerato, ma meno feature per similarity search
+Backup:
+Export giornaliero collezioni → JSON → MinIO
+Snapshot LXC settimanale completo
+LXC 102: "PostgreSQL" - Relational Database
+Risorse:
+RAM: 4GB
+CPU: 2 vCPU
+Disk: 80GB
+IP: 192.168.1.102
+Software:
+PostgreSQL:
+15.x (ultima stable)
+Estensioni installate:
+pgvector
+(vettori, se ChromaDB non basta)
+pg_stat_statements
+(query analytics)
+pg_cron
+(job scheduling)
+Caso d'uso:
+Metadata applicativi:
+Log operazioni AI, storia richieste orchestratore
+Time-series data:
+Metriche infra aggregate (per query veloci su Grafana)
+Session storage:
+Se sviluppi webapp con autenticazione
+Configurazione Tuning:
+Perché questi valori:
+shared_buffers:
+25% RAM totale (regola empirica PostgreSQL)
+effective_cache_size:
+75% RAM (suggerisce al planner quanta RAM ha l'OS per cache)
+random_page_cost = 1.1:
+SSD ha accesso quasi sequenziale, default 4.0 è per HDD
+Backup:
+pg_dump:
+Full backup giornaliero → MinIO
+WAL archiving:
+Continuous backup per point-in-time recovery
+Retention:
+30 giorni full backup, 7 giorni WAL
+LXC 103: "Observability Stack"
+Risorse:
+RAM: 6GB (Grafana + Prometheus sono pesanti)
+CPU: 2 vCPU
+Disk: 100GB (per retention metriche)
+IP: 192.168.1.103
+Stack Completo:
+1.
+Prometheus (Time-Series Database):
+Versione:
+2.x
+Retention:
+30 giorni (poi aggregazione a intervalli maggiori)
+Scrape Interval:
+30 secondi (compromesso tra granularità e overhead)
+Targets:
+shared_buffers = 1GB
+effective_cache_size = 3GB
+maintenance_work_mem = 256MB
+checkpoint_completion_target = 0.9
+wal_buffers = 16MB
+default_statistics_target = 100
+random_page_cost = 1.1 # SSD storage
+effective_io_concurrency = 200
+work_mem = 10MB
+Node Exporter su ogni VM/LXC (metriche OS)
+Proxmox VE Exporter (metriche hypervisor)
+Redis Exporter (metriche cache)
+PostgreSQL Exporter (metriche DB)
+Custom exporter per GPU worker (temperatura, VRAM, utilizzo)
+2.
+Grafana (Visualization):
+Versione:
+10.x
+Datasources:
+Prometheus (metriche)
+Loki (log)
+PostgreSQL (query custom)
+Dashboard Pre-configurate:
+"Infrastructure Overview" → Stato tutti i servizi
+"API Quota Monitor" → Grafico rate limit per provider
+"GPU Utilization" → Storia uso GPU locale
+"Cost Tracking" → Se usi API a pagamento, proiezione costi
+3.
+Loki (Log Aggregation):
+Versione:
+2.x
+Perché non ELK Stack:
+Elasticsearch richiede 4GB RAM solo per sé
+Log Sources:
+Promtail agent su ogni VM/LXC
+Docker container logs
+Systemd journal
+Retention:
+14 giorni (poi cleanup automatico)
+Perché questo stack:
+Open source completo:
+Zero costi licenza
+Integrazione nativa:
+Grafana + Prometheus + Loki sono dello stesso ecosistema (Grafana Labs)
+Leggero:
+6GB totali vs 16GB+ per ELK Stack
+Query potente:
+PromQL per metriche, LogQL per log (sintassi simile)
+Alert Manager:
+Prometheus AlertManager configurato per inviare notifiche quando:
+Servizio down per >5 minuti
+Disco pieno >85%
+Rate limit API >90% esaurito
+GPU temperatura >80°C per >10 minuti
+Canali notifica:
+Telegram Bot:
+Instant notification (free, API semplice)
+Email:
+Backup channel (SMTP gratuito via Gmail)
+Webhook:
+Per integrazione futura con sistemi terzi
+LXC 104: "MinIO" - Object Storage
+Risorse:
+RAM: 2GB
+CPU: 1 vCPU
+Disk: 200GB (dedicato per backup)
+IP: 192.168.1.104
+Software:
+MinIO:
+S3-compatible object storage (open source)
+Versione:
+Latest stable release
+Bucket Structure:
+Perché MinIO:
+S3-compatible API:
+Posso migrare su AWS S3/Backblaze B2 senza cambiare codice
+/backups/
+/infrastructure/
+/state_snapshots/
+state_2026-01-19_15-00.json
+state_2026-01-19_16-00.json
+/databases/
+/postgres/
+pg_dump_2026-01-19.sql.gz
+/chromadb/
+chroma_export_2026-01-19.json
+/git-repos/
+neural-home-repo_2026-01-19.tar.gz
+/vm-snapshots/
+brain-vm_2026-01-18.vma.zst
+Versioning:
+Snapshot multipli dello stesso file con history
+Lifecycle policies:
+Auto-delete backup vecchi
+Encryption at rest:
+AES-256 per dati sensibili
+Backup retention policy:
+State.json:
+7 giorni granularità oraria, poi 30 giorni giornaliera
+Database dumps:
+30 giorni completi
+VM snapshots:
+7 giorni (ogni snapshot è ~10-20GB)
+Alternative considerate:
+Network Share (NFS/SMB):
+Meno feature, no versioning, no lifecycle
+Rsync su disco esterno:
+Manuale, no automation
+Cloud storage (Backblaze B2):
+$5/TB/mese, preferisco locale per GDPR
+3. Architettura del Sistema di Stato
+3.1 Il File
+infrastructure/state.json
+Filosofia del Design
+Questo file è il
+cuore pulsante
+dell'intero sistema. Ogni decisione che un'AI prende deve basarsi suinformazioni contenute qui. Non è un file di configurazione statico (come i file YAML di Kubernetes), ma uno
+snapshot dinamico
+della realtà.
+Differenza chiave:
+File di configurazione:
+"Come VOGLIO che sia il sistema"
+State file:
+"Come È il sistema ADESSO"
+Struttura Semantica
+Il file è diviso in
+domini logici
+:
+1.
+meta
+:
+Metadata sul file stesso
+Quando è stato generato
+Chi lo ha generato
+Checksum per validazione integrità
+Durata della scansione (per rilevare rallentamenti)
+2.
+infrastructure
+:
+Stato fisico/virtuale
+Host Proxmox (CPU, RAM, storage)
+VM e LXC (risorse, uptime, salute)
+Endpoints di ogni servizio
+Health check results
+3.
+api_providers
+:
+Stato API esterne
+Quota giornaliera residua
+Latenza media ultimi 100 richieste
+Timestamp ultimo utilizzo
+Eventuali errori/rate limit
+4.
+alerts
+:
+Problemi attivi
+Servizi degraded
+Rate limit in esaurimento
+Risorse critiche (disco >90%)
+Perché questa struttura
+Domain Separation:
+Se un'AI sta debuggando un problema database, legge solo
+infrastructure.services[]
+filtratoper
+type: "lxc"
+e
+tags: ["database"]
+. Non deve parsare 500 righe di JSON.
+Temporal Consistency:
+Il campo
+meta.generated_at
+permette alle AI di capire se l'informazione è "fresca". Sel'ultimo scan è di 20 minuti fa, l'AI sa che potrebbe essere stale.
+Alert-Driven:
+Invece che l'AI debba "scoprire" problemi analizzando metriche, gli alert sono pre-computati.L'AI chiede: "Ci sono problemi?" e legge
+alerts[]
+.
+3.2 Sistema di Checksum e Validazione
+Problema: Race Condition nella Lettura
+Scenario problematico:
+1.
+Infrastructure scan inizia a scrivere
+state.json
+(operazione che richiede 2-3 secondi)
+2.
+Aider, in parallelo, legge il file a metà scrittura
+3.
+JSON è malformato o contiene dati parziali
+4.
+Aider genera codice con IP sbagliati
+Soluzione: Atomic Write + External Checksum
+Workflow di scrittura:
+1.
+Scanner genera JSON completo in memoria
+2.
+Calcola SHA256 del contenuto
+3.
+Scrive file temporaneo
+state.json.tmp
+4.
+Scrive checksum in
+state.json.checksum
+5.
+Atomic rename:
+state.json.tmp
+→
+state.json
+6.
+Su Linux,
+rename()
+syscall è atomico: nessuna lettura parziale possibile
+Workflow di lettura (obbligatorio per AI):
+1.
+Leggi
+state.json.checksum
+→ ottieni hash atteso
+2.
+Leggi
+state.json
+→ calcola hash reale
+3.
+Se hash atteso ≠ hash reale → file corrotto o in scrittura → RETRY dopo 1 secondo
+4.
+Se match → procedi con parsing
+Perché checksum ESTERNO:
+Se fosse dentro il JSON (
+"meta": {"checksum": "..."}
+), dovremmo calcolare ilchecksum
+escludendo
+il campo checksum stesso (problema del self-reference). Con file separato, calcoliamo sututto il file.
+Alternative considerate:
+Database transazionale:
+Overhead, dipendenza extra
+File lock (flock):
+Funziona, ma blocca letture anche quando scrittura è completa (meno performante)
+Versioning semantico nel filename:
+Complesso tracking, problemi di cleanup
+3.3 Snapshot Storici e Time-Travel
+Motivazione
+Scenario reale:
+Open Interpreter esegue: "Crea una VM per Redis". La VM viene creata, assegnato IP192.168.1.105. Ma l'operazione fallisce durante provisioning. La VM esiste "a metà", Proxmox dice "running",ma Redis non è avviato.
+Domanda:
+Come torniamo allo stato precedente in modo deterministico?
+Soluzione:
+Snapshot ogni modifica + History retention
+Architettura Snapshot
+Directory structure:
+Frequency:
+Automatico:
+Ogni ora (via cron)
+On-demand:
+Prima di ogni operazione infrastrutturale (create/destroy VM)
+Retention:
+Granularità oraria:
+Ultimi 7 giorni (168 snapshot)
+Granularità giornaliera:
+30 giorni (compressi)
+Snapshot critici:
+Mantenuti indefinitamente (tagged nel filename
+state_CRITICAL_
+)
+Caso d'uso: Rollback
+1.
+AI esegue operazione che rompe infrastruttura
+2.
+Tool di rollback:
+Legge ultimo snapshot valido
+Confronta con stato corrente (diff JSON)
+Identifica: "VM 105 esiste ora, ma non esisteva prima"
+Esegue:
+proxmox destroy-vm 105
+Restore
+state.json
+da snapshot
+Query time-travel:
+"Mostrami lo stato dell'infrastruttura alle 14:00 di ieri" → Leggi
+state_2026-01-18_14-00.json
+3.4 Dependency Graph
+Problema: Cascading Failures
+Scenario:
+Open Interpreter decide: "Il servizio ChromaDB non risponde, lo riavvio". Ma ChromaDB è usatodal frontend applicativo. Il riavvio causa 30 secondi di downtime del frontend. L'AI non era consapevoledell'impatto a valle.
+Scenario peggiore:
+"Il database PostgreSQL usa troppa RAM, lo fermo per ottimizzare configurazione." →PostgreSQL è usato da: Grafana, Applicazione Web, Sistema di Logging → L'intero stack di observability
+infrastructure/
+state.json # Corrente
+state.json.checksum
+state_history/
+state_2026-01-19_14-00.json
+state_2026-01-19_15-00.json
+state_2026-01-19_16-00.json
+crolla, non vediamo più metriche, impossibile debuggare altri problemi
+Soluzione: Grafo di Dipendenze Esplicito
+File:
+infrastructure/dependency_graph.json
+Struttura:
+Come le AI usano questo grafo:
+Esempio 1: Pre-flight Check prima del riavvio
+json
+{
+"services"
+:
+{
+"brain-vm"
+:
+{
+"depends_on"
+:
+[
+]
+,
+"required_by"
+:
+[
+"chromadb-lxc"
+,
+"postgres-lxc"
+,
+"observability-lxc"
+,
+"minio-lxc"
+]
+,
+"criticality"
+:
+"critical"
+,
+"can_restart_without_approval"
+:
+false
+}
+,
+"chromadb-lxc"
+:
+{
+"depends_on"
+:
+[
+"brain-vm"
+]
+,
+"required_by"
+:
+[
+"frontend-app"
+]
+,
+"criticality"
+:
+"high"
+,
+"can_restart_without_approval"
+:
+false
+}
+,
+"postgres-lxc"
+:
+{
+"depends_on"
+:
+[
+"brain-vm"
+]
+,
+"required_by"
+:
+[
+"grafana"
+,
+"webapp"
+,
+"log-processor"
+]
+,
+"criticality"
+:
+"critical"
+,
+"can_restart_without_approval"
+:
+false
+}
+,
+"minio-lxc"
+:
+{
+"depends_on"
+:
+[
+"brain-vm"
+]
+,
+"required_by"
+:
+[
+]
+,
+"criticality"
+:
+"medium"
+,
+"can_restart_without_approval"
+:
+true
+,
+"restart_safe_hours"
+:
+[
+2
+,
+3
+,
+4
+]
+}
+}
+}
+Esempio 2: Impatto Analysis
+Esempio 3: Safe Restart Window
+Perché file separato dal state.json
+Motivo 1: Frequenza aggiornamento
+state.json
+: Si aggiorna ogni 5 minuti (dinamico)
+dependency_graph.json
+: Si aggiorna solo quando aggiungi/rimuovi servizi (statico)
+Motivo 2: Human-editable
+Le dipendenze sono configurazione intenzionale, non scoperta automatica. Vuoipoterle editare manualmente senza rischio che lo scanner le sovrascriva.
+Motivo 3: Validazione Schema
+Il grafo deve essere aciclico (DAG - Directed Acyclic Graph). Un tool separatovalida che non ci siano cicli tipo:
+A → B → C → A
+(impossibile determinare ordine di startup).
+Alternative considerate:
+Discovery automatica:
+Analizzare traffic di rete per inferire dipendenze. Problematico: rilevacorrelazioni spurie.
+Dentro docker-compose:
+Funziona solo per container, non per VM/LXC.
+Kubernetes-style annotations:
+Troppo complesso per setup semplice.
+AI: "Devo riavviare ChromaDB"
+→ Legge dependency_graph.json
+→ Vede required_by: ["frontend-app"]
+→ Avvisa: "⚠️ Riavviare ChromaDB causerà downtime del frontend. Confermi?"
+→ Attende conferma umana
+Umano: "Cosa succede se fermo PostgreSQL per manutenzione?"
+AI:
+→ Calcola transitive dependencies
+→ Risponde: "Questi servizi smetteranno di funzionare:
+- Grafana (perderai visibilità metriche)
+- WebApp (errore database connection)
+- Log Processor (non può scrivere audit log)"
+AI: "Devo riavviare MinIO per aggiornamento"
+→ Legge restart_safe_hours: [2,3,4]
+→ Ora corrente: 15:00
+→ Schedula: "Riavvio pianificato per le 2:00 AM quando nessun servizio dipendente è attivo"
+4. Layer di Orchestrazione AI
+4.1 Il Problema del Rate Limiting
+Contesto Reale
+Stai lavorando su un progetto. Le tue AI attive sono:
+1.
+Aider:
+Refactoring di 50 file Python
+3 richieste per file (analisi + modifica + verifica)
+Totale: 150 richieste
+2.
+Open Interpreter:
+Setup nuova VM PostgreSQL
+Query documentazione: 5 richieste
+Generazione script: 3 richieste
+Debug errori: 10 richieste
+Totale: 18 richieste
+3.
+Antigravity:
+Sviluppo feature frontend
+Autocomplete: 20 richieste
+Code review: 5 richieste
+Totale: 25 richieste
+Totale giornata: 193 richieste
+Questo è uno scenario "tranquillo". In giorni intensi puoi arrivare a 500-1000 richieste.
+Rate Limit dei Provider (Free Tier)
+Provider
+Req/Giorno
+Req/Minuto
+Context
+Output Token
+Claude (Sonnet)
+1,000
+50
+200K
+8K
+Gemini 2.0 Flash
+1,500
+15
+1M
+8K
+DeepSeek V3
+2,000
+60
+64K
+8K
+Qwen 2.5 (72B)
+5,000
+20
+32K
+8K
+Problematica senza orchestrazione:
+Scenario A: Tutti usano Claude
+Ore 10:00 → 300 richieste (30% quota)
+Ore 14:00 → 800 richieste (80% quota)
+Ore 16:00 → Rate limit hit, le AI si bloccano per 8 ore
+Scenario B: Round-robin cieco
+Richieste distribuite equamente
+Ma Claude è il più veloce (800ms avg) → sottoutilizzato
+Qwen è il più lento (1100ms avg) → sovraccaricato
+User experience pessima: risposte lente anche quando c'è capacità disponibile
+4.2 Architettura dell'Orchestratore
+Componenti Principali
+1. Request Router
+Responsabilità:
+Decidere quale provider usare per ogni richiesta.
+Algoritmo di decisione (priority order):
+Perché questo scoring:
+50% peso su quota:
+Preferisce provider con più margine (distribuisce carico)
+30% peso su latenza:
+User experience, risposte rapide quando possibile
+20% peso su qualità:
+Claude > Gemini > DeepSeek per task complessi (soggettivo, configurabile)
+Quality Rating (manuale, da calibrare):
+1. Filtra provider disponibili:
+- quota_remaining > 0
+- NOT in rate_limit_cooldown
+- latency_avg < 5000ms (scarta se troppo lento)
+2. Calcola "score" per ogni provider:
+score = (quota_remaining / quota_total) * 0.5 +
+(1 / latency_avg_ms * 1000) * 0.3 +
+(quality_rating / 10) * 0.2
+3. Se score_max < threshold (0.3):
+→ Fallback su GPU locale (se semaforo green)
+→ Altrimenti, queue request (attendi reset quota)
+4. Seleziona provider con score massimo
+yaml
+2. Rate Limiter
+Responsabilità:
+Tracciare quante richieste sono state fatte a ogni provider.
+Storage:
+Redis (in-memory, veloce, atomic)
+Struttura dati:
+Operazioni atomiche:
+Perché Redis HASH invece di chiavi separate:
+Atomic multi-field update
+Più efficiente per letture (un solo comando
+HGETALL
+)
+TTL automatico sulla chiave madre (si auto-cancella a mezzanotte)
+Reset automatico:
+Cron job alle 00:01 UTC:
+3. Cost Tracker (opzionale, per pay-per-use)
+Responsabilità:
+Se esci dal free tier, traccia costi stimati.
+Calcolo:
+claude-sonnet
+:
+9.5
+# Migliore per ragionamento complesso
+gemini-2-flash
+:
+8.0
+# Ottimo general purpose
+deepseek-v3
+:
+7.5
+# Buono per code, meno per creative
+qwen-72b
+:
+7.0
+# Veloce ma meno accurato
+gpu-local-32b
+:
+6.0
+# Modello locale, limitato da quantizzazione
+HASH api_quota:claude:2026-01-19
+requests_made: 342
+last_request_timestamp: 1737294895
+reset_at: 1737327600 (midnight UTC)
+HASH api_quota:gemini:2026-01-19
+requests_made: 156
+...
+HINCRBY api_quota:claude:2026-01-19 requests_made 1
+HSET api_quota:claude:2026-01-19 last_request_timestamp <unix_timestamp>
+DEL api_quota:* (cancella tutte le chiavi del giorno precedente)
+python
+Storage:
+PostgreSQL (persistente, query aggregati)
+Schema:
+Dashboard Grafana:
+Grafico costi giornalieri per provider
+Proiezione mensile: "A questo ritmo spenderai $X/mese"
+Alert: "Hai speso $10 oggi, limite giornaliero configurato: $5"
+Perché tracciare anche nel free tier:
+Preparazione: Se il progetto scala, hai già i dati
+Ottimizzazione: Identifichi quale AI spreca token (es. Aider genera codice verboso)
+Accountability: Vedi se un refactoring "automatico" vale il costo
+4. GPU Queue Manager
+Responsabilità:
+Gestire code di richieste per GPU locale.
+# Esempio Claude pricing (ipotetico)
+INPUT_COST_PER_MTK
+=
+3.00
+# $3 per million tokens input
+OUTPUT_COST_PER_MTK
+=
+15.00
+# $15 per million tokens output
+cost_request
+=
+(
+input_tokens
+/
+1_000_000
+*
+INPUT_COST_PER_MTK
+)
++
+(
+output_tokens
+/
+1_000_000
+*
+OUTPUT_COST_PER_MTK
+)
+sql
+CREATE
+TABLE
+api_requests
+(
+id
+SERIAL
+PRIMARY
+KEY
+,
+timestamp
+TIMESTAMPTZ
+,
+provider
+VARCHAR
+(
+50
+)
+,
+model
+VARCHAR
+(
+100
+)
+,
+input_tokens
+INT
+,
+output_tokens
+INT
+,
+latency_ms
+INT
+,
+cost_usd
+DECIMAL
+(
+10
+,
+4
+)
+,
+user_agent
+VARCHAR
+(
+200
+)
+,
+-- Aider/OI/Antigravity
+success
+BOOLEAN
+)
+;
+CREATE
+INDEX
+idx_requests_timestamp
+ON
+api_requests
+(
+timestamp
+)
+;
+CREATE
+INDEX
+idx_requests_provider
+ON
+api_requests
+(
+provider
+)
+;
+Workflow:
+1.
+Orchestratore decide: "Tutti i provider sono esauriti, uso GPU"
+2.
+Controlla semaforo Redis:
+GET semaphore:gpu
+Se
+green
+: Invia richiesta diretta a
+http://192.168.1.50:5000/v1/completions
+Se
+red
+o
+yellow
+: Accoda su
+RPUSH gpu_queue <request_json>
+3.
+Worker sulla GPU (separato):
+4.
+Orchestratore attende:
+Polling:
+GET gpu_result:{request_id}
+ogni 2 secondi
+Oppure subscribe:
+SUBSCRIBE gpu_results
+(più efficiente)
+Timeout handling:
+Se richiesta in coda per >5 minuti:
+Orchestratore invia errore all'AI: "GPU non disponibile, riprova più tardi"
+AI notifica utente o riprogramma task
+Priorità Code:
+Perché code separate per priorità:
+Se Aider sta processando 50 file, non vuoi che Antigravity attenda 5 minutiper un autocomplete.
+4.3 Strategie di Fallback
+Cascata di Fallback
+python
+while
+True
+:
+request
+=
+redis
+.
+blpop
+(
+'gpu_queue'
+,
+timeout
+=
+5
+)
+if
+request
+:
+result
+=
+run_inference
+(
+request
+)
+redis
+.
+set
+(
+f'gpu_result:
+{
+request_id
+}
+'
+,
+result
+)
+redis
+.
+publish
+(
+'gpu_results'
+,
+request_id
+)
+RPUSH gpu_queue:high <request> # Task interattivi (Antigravity autocomplete)
+RPUSH gpu_queue:low <request> # Task batch (Aider bulk refactor)
+# Worker processa high prima di low
+while True:
+req = redis.blpop(['gpu_queue:high', 'gpu_queue:low'])
+Configurazione per tipo di task:
+Perché catene specifiche per task:
+Non tutti i modelli sono uguali. Gemini 2.0 Flash eccelle con contextlunghi (1M token). Claude è migliore per ragionamento multi-step. DeepSeek è ottimizzato per code.
+Graceful Degradation
+Scenario:
+Tutti i provider esterni esauriti, GPU occupata.
+Opzioni:
+Request → Orchestratore
+↓
+1. Provider primario (best score)
+❌ Rate limited
+↓
+2. Provider secondario
+❌ Latenza >5s (timeout)
+↓
+3. Provider terziario
+✅ Success (200 OK)
+yaml
+task_fallback_chains
+:
+code_generation
+:
+-
+claude
+-
+sonnet
+# Migliore qualità
+-
+deepseek
+-
+v3
+# Specializzato code
+-
+gpu
+-
+local
+-
+32b
+# Fallback
+creative_writing
+:
+-
+claude
+-
+sonnet
+-
+gemini
+-
+2
+-
+flash
+-
+qwen
+-
+72b
+data_analysis
+:
+-
+gemini
+-
+2
+-
+flash
+# Context window 1M token
+-
+claude
+-
+sonnet
+-
+deepseek
+-
+v3
+quick_queries
+:
+-
+gemini
+-
+2
+-
+flash
+# Più veloce
+-
+qwen
+-
+72b
+-
+gpu
+-
+local
+-
+8b
+# Modello piccolo, risposte immediate
+1.
+Blocking Wait (default per task critici):
+2.
+Deferred Execution (task non interattivi):
+3.
+User Prompt (task ambigui):
+Perché non fallire silenziosamente:
+Le AI devono essere trasparenti. Se una richiesta viene degradata (es.usato modello peggiore), l'utente deve saperlo per valutare l'output.
+5. Sistema di Gestione delle Risorse GPU
+5.1 Il Semaforo: Architettura Dettagliata
+Filosofia di Design
+La GPU del PC gaming è una risorsa
+condivisa
+tra due use case incompatibili:
+Gaming:
+Richiede 100% GPU, latenza <16ms (60 FPS)
+AI Inference:
+Richiede 100% GPU, latenza non critica (30-60s accettabili)
+Non possiamo semplicemente "condividere" la GPU tra i due (CUDA non supporta pre-emption elegante).Serve orchestrazione esplicita.
+Orchestratore: "Tutte le risorse occupate. Attendo disponibilità..."
+[polling ogni 30s]
+Appena GPU libera → Processa
+Salva task su PostgreSQL:
+INSERT INTO deferred_tasks (task_type, payload, created_at, status)
+Cron job ogni 15 minuti:
+- Legge pending tasks
+- Se risorse disponibili → Esegue
+- Notifica utente via Telegram: "Task completato: <link_result>"
+AI: "Non ho risorse per generare codice ora. Opzioni:
+1. Attendere (ETA: 15 minuti quando GPU si libera)
+2. Usare modello locale più piccolo (qualità ridotta)
+3. Rimandare a domani mattina (esecuzione automatica alle 8 AM)
+Scegli: [1/2/3]"
+Stati del Semaforo
+Implementazione del Monitor
+Componente:
+Servizio Python in background (systemd service su WSL2)
+Dati raccolti:
+1.
+Processo Fullscreen (Windows API):
+2.
+Metriche GPU (NVML - NVIDIA Management Library):
+GREEN: GPU completamente libera
+- Nessun processo grafico fullscreen
+- Utilizzo GPU <10% (idle)
+- Temperatura <50°C
+- VRAM usata <2GB (solo OS overhead)
+- Nessuna richiesta in coda
+YELLOW: GPU in uso leggero
+- Browser con video/WebGL
+- Utilizzo GPU 10-40%
+- Temperatura 50-65°C
+- Inference rapide OK (modelli <8B param)
+RED: GPU occupata
+- Gioco in esecuzione (fullscreen detected)
+- Utilizzo GPU >40%
+- Temperatura >65°C
+- VRAM >8GB
+- Richiesta esplicita utente (via hotkey)
+python
+import
+win32gui
+hwnd
+=
+win32gui
+.
+GetForegroundWindow
+(
+)
+_
+,
+pid
+=
+win32process
+.
+GetWindowThreadProcessId
+(
+hwnd
+)
+process
+=
+psutil
+.
+Process
+(
+pid
+)
+# Euristica: Se exe è in cartella Games/Steam/Epic → Gaming
+if
+any
+(
+keyword
+in
+process
+.
+exe
+(
+)
+for
+keyword
+in
+[
+'steam'
+,
+'games'
+,
+'epic'
+]
+)
+:
+return
+"RED"
+python
+3.
+Rilevazione Idle:
+Logica decisione stato:
+import
+pynvml
+pynvml
+.
+nvmlInit
+(
+)
+handle
+=
+pynvml
+.
+nvmlDeviceGetHandleByIndex
+(
+0
+)
+util
+=
+pynvml
+.
+nvmlDeviceGetUtilizationRates
+(
+handle
+)
+temp
+=
+pynvml
+.
+nvmlDeviceGetTemperature
+(
+handle
+,
+pynvml
+.
+NVML_TEMPERATURE_GPU
+)
+mem_info
+=
+pynvml
+.
+nvmlDeviceGetMemoryInfo
+(
+handle
+)
+vram_used_gb
+=
+mem_info
+.
+used
+/
+1024
+**
+3
+python
+# Se nessun input mouse/keyboard per >5 minuti → Probabilmente idle
+import
+ctypes
+class
+LASTINPUTINFO
+(
+ctypes
+.
+Structure
+)
+:
+_fields_
+=
+[
+(
+"cbSize"
+,
+ctypes
+.
+c_uint
+)
+,
+(
+"dwTime"
+,
+ctypes
+.
+c_ulong
+)
+]
+lii
+=
+LASTINPUTINFO
+(
+)
+lii
+.
+cbSize
+=
+ctypes
+.
+sizeof
+(
+LASTINPUTINFO
+)
+ctypes
+.
+windll
+.
+user32
+.
+GetLastInputInfo
+(
+ctypes
+.
+byref
+(
+lii
+)
+)
+idle_time_ms
+=
+(
+win32api
+.
+GetTickCount
+(
+)
+-
+lii
+.
+dwTime
+)
+python
+def
+determine_state
+(
+)
+:
+if
+fullscreen_game_active
+(
+)
+:
+return
+"RED"
+if
+gpu_util
+>
+40
+or
+gpu_temp
+>
+65
+or
+vram_used
+>
+8
+:
+return
+"RED"
+if
+10
+<
+gpu_util
+<
+40
+and
+vram_used
+<
+8
+:
+return
+"YELLOW"
+if
+idle_time
+>
+300_000
+and
+gpu_util
+<
+10
+:
+# 5 min idle
+return
+"GREEN"
+return
+"YELLOW"
+# Default conservativo
+Comunicazione con Orchestratore
+Protocollo Redis:
+1.
+Heartbeat (ogni 10 secondi):
+2.
+Metadata aggiuntivi:
+3.
+Notifiche cambi stato (Pub/Sub):
+Perché Pub/Sub oltre a polling:
+Orchestratore può aspettare passivamente invece di pollingare ogni secondo.Riduce carico CPU e latenza (notifica istantanea vs polling ogni 30s).
+5.2 Model Management sulla GPU
+Problema: Context Switching è Costoso
+Scenario:
+Aider richiede: Modello code (DeepSeek-Coder-33B)
+Open Interpreter richiede: Modello general (Qwen2.5-32B)
+Antigravity richiede: Modello veloce (Llama-3.1-8B)
+Swap model richiede:
+1.
+Unload modello corrente: ~5 secondi
+SETEX semaphore:gpu:heartbeat 30 "alive"
+SET semaphore:gpu "<stato>"
+# Se heartbeat non arriva per 30s → GPU considerata offline
+HSET semaphore:gpu:meta temperature_c 42
+HSET semaphore:gpu:meta vram_used_gb 2.1
+HSET semaphore:gpu:meta loaded_model "Qwen2.5-32B-Instruct"
+HSET semaphore:gpu:meta queue_length 3
+# Quando stato cambia da RED → GREEN
+PUBLISH semaphore:gpu:events "state_changed:GREEN"
+# Orchestratore subscribed può processare immediatamente coda
+2.
+Load nuovo modello in VRAM: ~10-15 secondi
+3.
+Totale: 15-20 secondi di overhead
+Se switchiamo ogni richiesta, passiamo più tempo a caricare che a inferire.
+Soluzione: Model Affinity + Time Windows
+Strategia 1: Batching per Modello
+L'orchestratore raggruppa richieste per stesso modello:
+Risparmio:
+2 swap invece di 4 (50% overhead ridotto)
+Strategia 2: Time Windows Dedicate
+Se richiesta arriva "fuori finestra", viene:
+Accodata per finestra successiva
+Oppure instradata a API cloud se urgente
+Perché funziona:
+La maggior parte del lavoro è "sessioni": non switchi tra coding e scrittura creativa ogni 5minuti. Le sessioni durano ore.
+5.3 Hotkey Manual Override
+Motivazione
+Queue: [req_code_1, req_general_1, req_code_2, req_code_3, req_general_2]
+Riordina:
+Batch 1 (Code Model): [req_code_1, req_code_2, req_code_3]
+Batch 2 (General Model): [req_general_1, req_general_2]
+Esecuzione:
+1. Load DeepSeek-Coder → Processa batch 1 → 3 richieste senza swap
+2. Load Qwen → Processa batch 2
+yaml
+model_schedule
+:
+"08:00-12:00"
+:
+"Qwen2.5-32B"
+# General work
+"12:00-14:00"
+:
+"Llama-8B"
+# Quick lunch queries
+"14:00-18:00"
+:
+"DeepSeek-33B"
+# Coding session
+"18:00-22:00"
+:
+"GPU_RESERVED_GAMING"
+"22:00-08:00"
+:
+"Qwen2.5-32B"
+# Night batch tasks
+Scenario:
+Stai guardando un film, GPU idle (verde). Orchestratore decide di processare 10 richieste batch. Filminizia a laggare (GPU al 100%).
+Serve modo
+immediato
+per l'utente di dire: "Stop, GPU riservata".
+Implementazione
+Hotkey globale:
+Win + Shift + G
+(configurable)
+Azione:
+Auto-unlock:
+Dopo 1 ora (TTL Redis), lock scade automaticamente. Previene dimenticanze ("Ho bloccato ierisera, ora è mattina ma la GPU è ancora riservata").
+Alternative considerate:
+Dashboard web:
+Troppo lento (devo aprire browser, navigare)
+Telegram bot command:
+Richiede telefono a portata di mano
+Automatico via idle detection:
+Non rileva intent (potrei essere idle ma voler giocare tra 2 minuti)
+python
+# Listener hotkey (libreria: keyboard)
+import
+keyboard
+keyboard
+.
+add_hotkey
+(
+'win+shift+g'
+,
+toggle_manual_lock
+)
+def
+toggle_manual_lock
+(
+)
+:
+current
+=
+redis
+.
+get
+(
+'semaphore:gpu:manual_lock'
+)
+if
+current
+==
+'locked'
+:
+redis
+.
+delete
+(
+'semaphore:gpu:manual_lock'
+)
+redis
+.
+set
+(
+'semaphore:gpu'
+,
+'GREEN'
+)
+notify_user
+(
+"GPU unlocked - AI può usarla"
+)
+else
+:
+redis
+.
+setex
+(
+'semaphore:gpu:manual_lock'
+,
+3600
+,
+'locked'
+)
+# 1 ora
+redis
+.
+set
+(
+'semaphore:gpu'
+,
+'RED'
+)
+# Interrompi task corrente (se possibile)
+redis
+.
+lpush
+(
+'gpu_queue:control'
+,
+'SIGTERM'
+)
+notify_user
+(
+"GPU locked - AI bloccata per 1h"
+)
+6. Modello di Sicurezza e Permessi
+6.1 Principio del Least Privilege
+Problema: AI con Root Access
+Scenario catastrofico:
+Open Interpreter, per errore di prompt, esegue:
+→ Cancella tutti i container, dati persi
+O peggio:
+→ Tenta di cancellare il nodo Proxmox (failsafe lo previene, ma il tentativo è allarmante)
+Soluzione: Utenti Dedicati con Permessi Limitati
+Architettura Utenti:
+1.
+brain-vm:
+Utente:
+ai-agent
+(NON root)
+Permessi:
+Lettura
+infrastructure/state.json
+Scrittura
+projects/
+(codice applicativo)
+Esecuzione script in
+tools/
+(pre-approvati)
+NO accesso a
+/etc
+,
+/var/lib
+,
+systemd
+Sudoers (limitato):
+2.
+Proxmox Host:
+Utente API:
+ai_manager@pve
+Permessi (ACL Proxmox):
+bash
+ssh
+root@192.168.1.100
+"rm -rf /var/lib/docker"
+bash
+ssh
+root@proxmox
+"pvesh delete /nodes/pve-minipc"
+ai-agent ALL=(ALL) NOPASSWD: /usr/local/bin/infrastructure_scan.py
+ai-agent ALL=(ALL) NOPASSWD: /usr/local/bin/backup_state.sh
+Token API (invece di password):
+3.
+VM/LXC Satelliti:
+Utente SSH:
+docker-user
+Permessi:
+Gestione container Docker (gruppo
+docker
+)
+Lettura log (
+/var/log/docker/
+)
+NO accesso filesystem applicativo
+NO sudo
+Perché questa stratificazione:
+Se AI compromessa (prompt injection), danno limitato a scope utente
+Se token API leaked, attaccante non può distruggere storage/network
+Se SSH key rubata, accede solo a funzioni monitorate
+6.2 Secrets Management
+Problema: Credenziali in Chiaro
+Anti-pattern pericoloso:
+Se questo file finisce in Git, o un'AI lo legge e lo include in un log, secrets esposti.
+Role: AI_Manager
+- VM.Audit: ✅ (lettura stato VM)
+- VM.Console: ✅ (accesso console emergenze)
+- VM.PowerMgmt: ✅ (start/stop/restart)
+- VM.Allocate: ❌ (NO creazione risorse senza supervisione)
+- Datastore.Allocate: ❌
+- Sys.Modify: ❌
+PVEAPIToken=ai_manager@pve!main=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+bash
+# .env.global (MALE!)
+POSTGRES_PASSWORD
+=
+mysecretpassword123
+PROXMOX_API_TOKEN
+=
+secret-token-here
+REDIS_PASSWORD
+=
+another-secret
+Soluzione: Ansible Vault
+Tool:
+ansible-vault
+(parte di Ansible, ma usabile standalone)
+Workflow:
+1.
+Crea file criptato:
+2.
+File è criptato (AES-256):
+3.
+Accesso tramite password file:
+4.
+Wrapper per AI:
+bash
+ansible-vault create secrets/secrets.vault.yml
+# Chiede password (salvata in password manager)
+# Contenuto (YAML):
+---
+postgres_password:
+"mysecretpassword123"
+proxmox_api_token:
+"secret-token-here"
+redis_password:
+"another-secret"
+$ANSIBLE_VAULT;1.1;AES256
+66386439653765386661326630623835...
+bash
+# Password salvata in ~/.vault_pass (gitignored)
+echo
+"my-master-password"
+>
+~/.vault_pass
+chmod
+600
+~/.vault_pass
+# Script legge secret
+ansible-vault view secrets/secrets.vault.yml --vault-password-file ~/.vault_pass
+|
+yq
+'.postgres_password'
+bash
+Perché Ansible Vault:
+Ubiquitario:
+Standard de-facto in DevOps
+Semplice:
+Un solo comando per encrypt/decrypt/edit
+Versionabile:
+File criptato può stare in Git (sicuro)
+Granulare:
+Puoi criptare solo alcuni file, non tutto il repo
+No dipendenze:
+Ansible già installato per automation
+Alternative considerate:
+HashiCorp Vault:
+Troppo complesso (server, unsealing, policies). Overkill per lab personale
+SOPS (Mozilla):
+Buono, ma meno diffuso. Stesso principio, sintassi diversa
+Git-crypt:
+Trasparente ma rischi di committare decrypted file per errore
+Environment variables:
+Non persistenti, difficili da gestire tra VM multiple
+6.3 Wrapper Scripts: Sandboxing delle Operazioni
+Problema: Comandi Pericolosi Diretti
+Scenario pericoloso:
+Nessuna conferma, nessun rollback, nessun audit trail.
+Soluzione: Tool Scripts con Guardrail
+Esempio:
+tools/automation/manage_proxmox.py
+Feature di sicurezza integrate:
+# tools/secrets/get_secret.sh
+#!/bin/bash
+SECRET_NAME
+=
+$1
+ansible-vault view /path/to/secrets.vault.yml
+\
+--vault-password-file ~/.vault_pass
+|
+\
+yq
+".
+$SECRET_NAME
+"
+# AI esegue:
+PASSWORD
+=
+$(
+./tools/secrets/get_secret.sh postgres_password
+)
+psql -h
+192.168
+.1.102 -U admin -W
+$PASSWORD
+AI: "Distruggo la VM 105"
+Esegue: ssh root@proxmox "qm destroy 105"
+1.
+Dry-Run Obbligatorio per Operazioni Distruttive:
+2.
+Pre-flight Checks:
+3.
+Snapshot Automatico Pre-Operazione:
+python
+def
+destroy_vm
+(
+vmid
+,
+dry_run
+=
+True
+)
+:
+if
+dry_run
+:
+print
+(
+f"[DRY-RUN] Would destroy VM
+{
+vmid
+}
+"
+)
+# Simula operazione
+vm_info
+=
+proxmox
+.
+get_vm
+(
+vmid
+)
+print
+(
+f" Name:
+{
+vm_info
+[
+'name'
+]
+}
+"
+)
+print
+(
+f" IPs:
+{
+vm_info
+[
+'ips'
+]
+}
+"
+)
+print
+(
+f" Dependent services:
+{
+get_dependents
+(
+vmid
+)
+}
+"
+)
+return
+{
+"status"
+:
+"dry-run"
+,
+"safe"
+:
+True
+}
+# Esecuzione reale richiede conferma esplicita
+confirm
+=
+input
+(
+f"DESTROY VM
+{
+vmid
+}
+? Type 'YES' to confirm: "
+)
+if
+confirm
+!=
+"YES"
+:
+return
+{
+"status"
+:
+"cancelled"
+}
+python
+def
+pre_destroy_checks
+(
+vmid
+)
+:
+checks
+=
+[
+]
+# Check 1: VM esiste?
+if
+not
+vm_exists
+(
+vmid
+)
+:
+checks
+.
+append
+(
+{
+"check"
+:
+"exists"
+,
+"pass"
+:
+False
+}
+)
+# Check 2: È critica?
+if
+vmid
+==
+100
+:
+# Brain VM
+checks
+.
+append
+(
+{
+"check"
+:
+"not_critical"
+,
+"pass"
+:
+False
+,
+"error"
+:
+"Cannot destroy Brain VM"
+}
+)
+# Check 3: Ha dipendenti attivi?
+dependents
+=
+get_dependents
+(
+vmid
+)
+if
+dependents
+:
+checks
+.
+append
+(
+{
+"check"
+:
+"no_dependents"
+,
+"pass"
+:
+False
+,
+"dependents"
+:
+dependents
+}
+)
+return
+all
+(
+c
+[
+"pass"
+]
+for
+c
+in
+checks
+)
+,
+checks
+4.
+Audit Logging:
+Perché wrapper invece di comandi diretti:
+Controllo centralizzato:
+Un solo punto dove implementare sicurezza
+Evolvibilità:
+Posso aggiungere checks senza modificare AI agents
+Testabilità:
+Posso testare script indipendentemente dalle AI
+Audit:
+Ogni operazione tracciata, non importa quale AI la chiama
+python
+def
+create_vm
+(
+template
+,
+name
+)
+:
+# Salva stato corrente
+snapshot_state
+(
+)
+try
+:
+vm
+=
+proxmox
+.
+create_vm
+(
+template
+,
+name
+)
+# Aggiorna state.json
+run_infrastructure_scan
+(
+)
+return
+{
+"status"
+:
+"success"
+,
+"vmid"
+:
+vm
+.
+vmid
+}
+except
+Exception
+as
+e
+:
+# Rollback automatico
+rollback_to_snapshot
+(
+)
+return
+{
+"status"
+:
+"failed"
+,
+"error"
+:
+str
+(
+e
+)
+}
+python
+def
+log_operation
+(
+operation
+,
+params
+,
+result
+,
+user
+=
+"ai-agent"
+)
+:
+log_entry
+=
+{
+"timestamp"
+:
+datetime
+.
+now
+(
+timezone
+.
+utc
+)
+.
+isoformat
+(
+)
+,
+"operation"
+:
+operation
+,
+"params"
+:
+params
+,
+"result"
+:
+result
+,
+"user"
+:
+user
+,
+"source_ip"
+:
+get_caller_ip
+(
+)
+}
+# Scrivi su PostgreSQL (immutabile, non cancellabile da AI)
+db
+.
+execute
+(
+"INSERT INTO audit_log VALUES (%s)"
+,
+log_entry
+)
+# Scrivi anche su file (backup)
+with
+open
+(
+"/var/log/nhi/operations.log"
+,
+"a"
+)
+as
+f
+:
+f
+.
+write
+(
+json
+.
+dumps
+(
+log_entry
+)
++
+"\n"
+)
+6.4 Network Isolation (Opzionale ma Consigliato)
+Architettura con VLAN
+Se vuoi massima sicurezza, separa traffico in VLAN:
+Perché utile:
+Se un container viene compromesso (vulnerability in ChromaDB), attaccante non può pivotareverso Proxmox host o Brain VM.
+Perché opzionale:
+Setup domestico, rischio limitato. Se esponi servizi su internet, diventa importante.
+7. Resilienza e Disaster Recovery
+7.1 Backup Strategy Multi-Layer
+Layer 1: State.json Snapshots (Continui)
+Frequenza:
+Ogni ora (168 snapshot = 7 giorni)
+Storage:
+Locale su Brain VM + replica su MinIO
+Retention:
+7giorni granularità oraria, poi 30 giorni giornaliera
+Caso d'uso:
+"Alle 14:00 avevo creato una VM Redis che ora è sparita. Cosa è successo?" → Leggi
+state_2026-01-19_14-00.json
+vs
+state_2026-01-19_15-00.json
+→ Scopri: VM Redis (ID 105) esisteva alle 14:00, alle 15:00non c'è più → Controlla audit log: Open Interpreter l'ha distrutta per errore alle 14:32
+VLAN 10 (Management): 192.168.10.0/24
+- Proxmox host: 192.168.10.1
+- Brain VM: 192.168.10.100
+- Accesso SSH, API Proxmox
+VLAN 20 (Services): 192.168.20.0/24
+- ChromaDB: 192.168.20.101
+- PostgreSQL: 192.168.20.102
+- Observability: 192.168.20.103
+VLAN 30 (External): 192.168.30.0/24
+- Frontend webapp (esposta a internet)
+- Reverse proxy
+Firewall rules:
+- VLAN 20 → VLAN 10: DENY (servizi non possono gestire infra)
+- VLAN 10 → VLAN 20: ALLOW (management può tutto)
+- VLAN 30 → VLAN 20: ALLOW solo porte specifiche (80, 443, 5432)
+Layer 2: Database Dumps (Giornalieri)
+PostgreSQL:
+Compressione custom format (
+-F c
+):
+Compresso automaticamente
+Restore selettivo (solo alcune tabelle)
+Parallel restore possibile
+ChromaDB:
+Perché export API invece di snapshot filesystem:
+ChromaDB usa SQLite/DuckDB internamente. Copiare filea caldo può causare corruption. Export via API garantisce consistenza.
+Layer 3: VM/LXC Snapshots (Settimanali)
+Proxmox Backup Server (PBS):
+Configurazione:
+bash
+# Cron: 0 2 * * * (ogni giorno alle 2 AM)
+pg_dump -h
+192.168
+.1.102 -U admin -F c -f /backup/postgres_
+$(
+date
++%Y%m%d
+)
+.dump
+# Upload su MinIO
+mc
+cp
+/backup/postgres_
+$(
+date
++%Y%m%d
+)
+.dump minio/backups/databases/postgres/
+# Cleanup locale (mantieni ultimi 7 giorni)
+find
+/backup -name
+"postgres_*.dump"
+-mtime +7 -delete
+bash
+# Export collezioni via API
+curl
+http://192.168.1.101:8000/api/v1/collections/export
+>
+chroma_export.json
+# Upload su MinIO
+mc
+cp
+chroma_export.json minio/backups/databases/chromadb/
+Snapshot incrementale:
+Proxmox usa deduplicazione e compressione. Snapshot incrementali successiveoccupano solo delta (es. 20GB prima volta, 2GB aggiornamenti successivi).
+Restore rapido:
+Layer 4: Git Repository (Real-time)
+Monorepo Brain VM:
+Hook Git automatico:
+Perché due remote:
+GitHub:
+Cloud backup, resiliente a disastro fisico (casa brucia)
+Gitea locale:
+Veloce, nessuna dipendenza internet per clone
+Snapshot giornaliero completo:
+Storage: PBS su NAS esterno (opzionale) o disco USB
+Schedule: Ogni domenica alle 3 AM
+Retention:
+- Keep last: 4 (ultimo mese, uno per settimana)
+- Keep monthly: 3 (ultimi 3 mesi)
+bash
+# Restore VM completa
+pct restore
+101
+/backup/ct-101-2026-01-19.tar.lzo
+# Oppure mount snapshot e copia solo file specifici
+pct
+mount
+101
+cp
+/mnt/backup/etc/postgresql/postgresql.conf /etc/postgresql/
+pct unmount
+101
+bash
+# .git/hooks/post-commit
+#!/bin/bash
+# Dopo ogni commit, push automatico su remote
+git
+push origin main
+# Backup su secondo remote (GitHub + Gitea self-hosted)
+git
+push backup main
+7.2 Disaster Recovery Scenarios
+Scenario A: Brain VM Crasha (Non Boot)
+Impatto:
+Perdi orchestrazione, state.json, AI agents non sanno cosa fare.
+Recovery Procedure:
+1.
+Accesso Proxmox via Web UI:
+https://192.168.1.10:8006
+2.
+Restore ultimo snapshot PBS:
+3.
+Verifica boot:
+Console VM → Controlla servizi systemd
+4.
+Re-sync state.json:
+5.
+Verifica dipendenti:
+Controlla che altre VM/LXC siano ancora raggiungibili
+Tempo stimato:
+10-15 minuti (se snapshot recente)
+Scenario B: Corruzione state.json
+Sintomo:
+AI reports: "state.json checksum mismatch"
+Cause possibili:
+Scan interrotto a metà (power loss)
+Bug nello scanner
+bash
+# Cron: 0 3 * * *
+tar
+czf neural-home-repo_
+$(
+date
++%Y%m%d
+)
+.tar.gz ~/neural-home-repo
+mc
+cp
+neural-home-repo_
+$(
+date
++%Y%m%d
+)
+.tar.gz minio/backups/git-repos/
+qmrestore /backup/vm-100-latest.vma.zst 100 --force
+bash
+ssh
+ai-agent@192.168.1.100
+cd
+~/neural-home-repo
+git
+pull origin main
+# In caso di divergenza
+python3 tools/core/infrastructure_scan.py
+# Re-genera state
+Disk corruption
+Recovery:
+1.
+Restore snapshot più recente:
+2.
+Rigenera checksum:
+3.
+Verifica consistenza:
+4.
+Se tutti gli snapshot corrotti (improbabile):
+Tempo stimato:
+2-5 minuti
+Scenario C: Proxmox Host Failure (Hardware)
+Impatto:
+Totale. Tutte le VM/LXC giù.
+Recovery (due opzioni):
+Opzione 1: Riparazione Hardware
+1.
+Sostituisci componente guasto (SSD/RAM)
+2.
+Reinstalla Proxmox VE da ISO
+3.
+Restore VM da PBS:
+bash
+cp
+infrastructure/state_history/state_2026-01-19_15-00.json infrastructure/state.json
+bash
+python3 tools/core/state_validator.py --regenerate-checksum
+bash
+python3 tools/core/state_validator.py
+# Output: ✅ state.json is valid
+bash
+# Re-scan da zero
+python3 tools/core/infrastructure_scan.py --full-rescan
+Opzione 2: Migrazione su Nuovo Hardware
+1.
+Setup Proxmox su nuovo MiniPC
+2.
+Restore backup (identico a sopra)
+3.
+Ri-configura networking se IP cambiano
+Tempo stimato:
+2-4 ore (incluso setup Proxmox da zero)
+Perché PBS è critico:
+Se backups sono solo locali su SSD del MiniPC, guasto SSD = perdita dati. PBS sustorage esterno (NAS/USB) garantisce sopravvivenza.
+Scenario D: Disaster Totale (Casa Brucia, Furto)
+Impatto:
+Perdi hardware fisico, backup locali.
+Recovery (da zero):
+1.
+Nuovo hardware (PC gaming + MiniPC o cloud VM):
+Opzione A: Ri-acquista hardware simile
+Opzione B: Provision su cloud (Hetzner, OVH) temporaneamente
+2.
+Clone repository da GitHub:
+3.
+Se avevi backup MinIO su cloud S3:
+4.
+Rebuild infra manualmente:
+bash
+# Dopo setup Proxmox base
+pvesm
+add
+pbs backup --server
+192.168
+.1.200 --datastore backups
+qmrestore backup:vm-100-latest
+100
+qmrestore backup:ct-101-latest
+101
+# ... per ogni VM/LXC
+bash
+git
+clone https://github.com/tuousername/neural-home-repo.git
+cd
+neural-home-repo
+bash
+# Scarica ultimi backup
+aws s3
+sync
+s3://your-bucket/backups/ ./restore/
+Setup Proxmox
+Crea VM Brain
+Restore database dump più recenti
+Re-deploy servizi
+Tempo stimato:
+1-2 giorni (lavoro manuale significativo)
+Come prevenire:
+Offsite backup:
+MinIO replica su Backblaze B2 ($6/TB/mese) o simile
+Cloud git remote:
+GitHub gratis per repo privati
+Documentazione stampata:
+Keep
+RUNBOOK.md
+stampato in luogo sicuro
+8. Observability e Monitoring
+8.1 Stack Prometheus + Grafana + Loki
+Architettura del Flusso Dati
+Metriche Chiave Monitorate
+1. Infrastruttura Base:
+node_cpu_seconds_total
+: CPU usage per core
+┌─────────────────────────────────────────────────┐
+│ Targets (VM/LXC/Services) │
+├─────────────────────────────────────────────────┤
+│ - Node Exporter (metriche OS: CPU, RAM, Disk) │
+│ - Postgres Exporter (query performance) │
+│ - Redis Exporter (hit rate, memory) │
+│ - Custom GPU Exporter (temperatura, VRAM) │
+│ - Promtail (shipping logs) │
+└────────────┬────────────────────────────────────┘
+│
+│ HTTP scrape ogni 30s (Prometheus)
+│ Push logs real-time (Loki)
+▼
+┌─────────────────────────────────────────────────┐
+│ Observability Stack (LXC 103) │
+├─────────────────────────────────────────────────┤
+│ Prometheus: Time-series DB │
+│ - Retention: 30 giorni │
+│ - Storage: ~5GB per 30d @ 30s interval │
+│ │
+│ Loki: Log aggregation │
+│ - Retention: 14 giorni │
+│ - Compressione: ~10:1 ratio │
+│ │
+│ Grafana: Visualization │
+│ - Datasources: Prometheus + Loki + Postgres │
+│ - Dashboards: pre-configured + custom │
+└────────────┬────────────────────────────────────┘
+│
+│ Query via PromQL/LogQL
+▼
+┌─────────────────────────────────────────────────┐
+│ Users (AI + Human) │
+├─────────────────────────────────────────────────┤
+│ - Grafana Web UI: http://192.168.1.103:3000 │
+│ - API Query: curl Prometheus /api/v1/query │
+│ - AI agents: Lettura metriche per decisions │
+└─────────────────────────────────────────────────┘
+node_memory_MemAvailable_bytes
+: RAM disponibile
+node_filesystem_avail_bytes
+: Spazio disco libero
+node_network_receive_bytes_total
+: Traffico rete in ingresso
+node_disk_io_time_seconds_total
+: I/O wait (rileva bottleneck disco)
+2. GPU Worker:
+gpu_temperature_celsius
+: Temperatura GPU
+gpu_memory_used_bytes
+: VRAM utilizzata
+gpu_utilization_percent
+: Carico GPU
+gpu_power_draw_watts
+: Consumo energetico
+gpu_queue_length
+: Richieste in coda
+gpu_semaphore_state
+: Stato semaforo (0=RED, 1=YELLOW, 2=GREEN)
+3. AI Orchestrator:
+api_requests_total
+: Counter per provider (labels: provider, status)
+api_quota_remaining
+: Quota residua per provider
+api_latency_seconds
+: Histogram latenza richieste
+api_errors_total
+: Counter errori per provider
+routing_decision
+: Quale provider è stato scelto (labels: task_type, provider)
+4. Database:
+postgres_up
+: Database raggiungibile (1=up, 0=down)
+postgres_connections_active
+: Connessioni attive
+postgres_query_duration_seconds
+: Durata query (histogram)
+postgres_database_size_bytes
+: Dimensione database
+chromadb_collections_total
+: Numero collezioni
+chromadb_vectors_total
+: Numero vettori indicizzati
+Dashboard Grafana Pre-Configurate
+Dashboard 1: "Infrastructure Overview"
+Pannelli:
+Row 1: Proxmox Host
+Gauge: CPU Usage (%)
+Gauge: RAM Usage (GB/totale)
+Graph: Network I/O (last 24h)
+Row 2: VM Status Matrix
+Table: Nome VM | Status | Uptime | CPU% | RAM MB
+Colore: Verde (healthy), Giallo (degraded), Rosso (down)
+Row 3: Storage
+Pie chart: Disco allocato per VM
+Graph: Disk I/O per VM (stack)
+Dashboard 2: "AI Orchestrator Monitor"
+Pannelli:
+Row 1: Quota Status
+Bar chart (orizzontale): Quota residua per provider
+Threshold lines: 25% (warning), 10% (critical)
+Row 2: Routing Decisions
+Stacked area graph: Richieste nel tempo per provider
+Colori distinti per Claude/Gemini/DeepSeek/Qwen/GPU
+Row 3: Latency & Errors
+Heatmap: Latenza media per provider per ora del giorno
+Graph: Error rate per provider (ultima settimana)
+Dashboard 3: "GPU Worker"
+Pannelli:
+Row 1: Real-time Status
+Gauge grande: Temperatura (threshold: 80°C warning)
+Gauge: VRAM usage
+Stat panel: Semaforo stato (RED/YELLOW/GREEN)
+Row 2: Utilizzo nel Tempo
+Graph: GPU utilization % (last 24h)
+Graph: Queue length over time
+Row 3: Model Performance
+Table: Loaded model | Avg inference time | Throughput (tokens/s)
+8.2 Alerting Intelligente
+AlertManager Configuration
+Alert Rules (Prometheus):
+yaml
+Notification Channels:
+groups
+:
+-
+name
+:
+infrastructure
+interval
+:
+30s
+rules
+:
+# Servizio down
+-
+alert
+:
+ServiceDown
+expr
+:
+up
+{
+job="node
+-
+exporter"
+}
+== 0
+for
+:
+5m
+labels
+:
+severity
+:
+critical
+annotations
+:
+summary
+:
+"Service {{ $labels.instance }} is down"
+description
+:
+"{{ $labels.instance }} unreachable for 5 minutes"
+# Disco pieno
+-
+alert
+:
+DiskSpaceLow
+expr
+:
+(node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.15
+for
+:
+10m
+labels
+:
+severity
+:
+warning
+annotations
+:
+summary
+:
+"Disk space low on {{ $labels.instance }}"
+description
+:
+"Only {{ $value | humanizePercentage }} space remaining"
+# GPU overheating
+-
+alert
+:
+GPUOverheating
+expr
+:
+gpu_temperature_celsius
+>
+80
+for
+:
+10m
+labels
+:
+severity
+:
+critical
+annotations
+:
+summary
+:
+"GPU temperature critical"
+description
+:
+"GPU at {{ $value }}°C for 10+ minutes"
+# API quota esaurita
+-
+alert
+:
+APIQuotaDepleted
+expr
+:
+api_quota_remaining < 100
+for
+:
+1m
+labels
+:
+severity
+:
+warning
+provider
+:
+"{{ $labels.provider }}"
+annotations
+:
+summary
+:
+"{{ $labels.provider }} quota almost depleted"
+description
+:
+"Only {{ $value }} requests remaining"
+1. Telegram Bot (Primary):
+2. Email (Fallback):
+Perché Telegram + Email:
+Telegram:
+Instant notification su telefono, ovunque. Bot API gratuita.
+Email:
+Backup se Telegram down, e hai record permanente (searchable inbox)
+8.3 Log Aggregation con Loki
+Architettura Logging
+1. Log Sources:
+yaml
+receivers
+:
+-
+name
+:
+telegram
+telegram_configs
+:
+-
+bot_token
+:
+'<token_from_secrets>'
+chat_id
+:
+<your_chat_id
+>
+parse_mode
+:
+Markdown
+message
+:
+|
+🚨 *{{ .GroupLabels.alertname }}*
+Severity
+:
+{
+{
+.CommonLabels.severity
+}
+}
+{
+{
+range .Alerts
+}
+}
+-
+{
+{
+.Annotations.summary
+}
+}
+{
+{
+end
+}
+}
+[
+View in Grafana
+]
+(http
+:
+//192.168.1.103
+:
+3000)
+yaml
+-
+name
+:
+email
+email_configs
+:
+-
+to
+:
+'your-email@example.com'
+from
+:
+'nhi-alerts@localhost'
+smarthost
+:
+'smtp.gmail.com:587'
+auth_username
+:
+'your-email@gmail.com'
+auth_password
+:
+'<app_password_from_secrets>'
+headers
+:
+Subject
+:
+'[NHI] {{ .GroupLabels.alertname }}'
+Systemd journals:
+Tutti i servizi su VM/LXC
+Docker containers:
+Stdout/stderr dei container
+Application logs:
+File custom (es.
+/var/log/nhi/operations.log
+)
+Audit logs:
+PostgreSQL audit trail
+2. Shipper: Promtail
+Installato su ogni VM/LXC come servizio systemd.
+Configurazione
+(
+promtail-config.yaml
+):
+yaml
+3. Query Examples (LogQL):
+Cercare errori in un servizio:
+Vedere ultimi 100 comandi eseguiti da AI:
+server
+:
+http_listen_port
+:
+9080
+positions
+:
+filename
+:
+/tmp/positions.yaml
+clients
+:
+-
+url
+:
+http
+:
+//192.168.1.103
+:
+3100/loki/api/v1/push
+scrape_configs
+:
+# Systemd journal
+-
+job_name
+:
+systemd
+journal
+:
+path
+:
+/var/log/journal
+labels
+:
+job
+:
+systemd
+host
+:
+$
+{
+HOSTNAME
+}
+# Docker containers
+-
+job_name
+:
+docker
+static_configs
+:
+-
+targets
+:
+-
+localhost
+labels
+:
+job
+:
+docker
+__path__
+:
+/var/lib/docker/containers/
+*/*.log
+# Custom app logs
+-
+job_name
+:
+nhi
+static_configs
+:
+-
+targets
+:
+-
+localhost
+labels
+:
+job
+:
+nhi
+__path__
+:
+/var/log/nhi/
+*.log
+{job="systemd", unit="chromadb.service"} |= "error" | __error__=""
+{job="nhi", filename="/var/log/nhi/operations.log"} | json | line_format "{{.operation}} by {{.user}}"
+Trovare richieste API lente:
+Correlazione temporale:
+8.4 AI Utilizza Metrics per Decision-Making
+Caso d'uso 1: Self-Healing
+Scenario:
+PostgreSQL lento (query >5s).
+AI Workflow:
+1.
+Alert ricevuto:
+"PostgreSQL query latency high"
+2.
+AI query Prometheus:
+3.
+AI query Loki per slow queries:
+4.
+AI propone soluzione:
+{job="docker", container_name="orchestrator"} | json | latency_ms > 3000
+# Cosa è successo nei 5 minuti prima del crash di una VM?
+{host="192.168.1.101"} [2026-01-19T15:25:00Z:2026-01-19T15:30:00Z]
+python
+query
+=
+'rate(postgres_query_duration_seconds_sum[5m]) / rate(postgres_query_duration_seconds_count[5m])'
+result
+=
+requests
+.
+get
+(
+f'http://192.168.1.103:9090/api/v1/query?query=
+{
+query
+}
+'
+)
+avg_duration
+=
+result
+.
+json
+(
+)
+[
+'data'
+]
+[
+'result'
+]
+[
+0
+]
+[
+'value'
+]
+[
+1
+]
+if
+float
+(
+avg_duration
+)
+>
+5.0
+:
+print
+(
+"Confirmed: Avg query duration is"
+,
+avg_duration
+,
+"seconds"
+)
+python
+query
+=
+'{job="postgres"} |= "duration:" | json | duration_ms > 5000'
+slow_queries
+=
+requests
+.
+get
+(
+f'http://192.168.1.103:3100/loki/api/v1/query?query=
+{
+query
+}
+'
+)
+# Analizza pattern
+common_table
+=
+analyze_slow_queries
+(
+slow_queries
+)
+print
+(
+f"Most slow queries involve table:
+{
+common_table
+}
+"
+)
+5.
+Se confermato, esegue:
+6.
+Verifica post-azione:
+Caso d'uso 2: Predictive Scaling
+Scenario:
+Quota API Claude sta esaurendosi velocemente.
+AI Workflow:
+1.
+Query trend:
+2.
+Calcola proiezione:
+"Slow queries targeting table 'vectors'. Suggerisco:
+1. Rebuild index: REINDEX TABLE vectors;
+2. Oppure aumentare RAM PostgreSQL (shared_buffers)
+Quale azione preferisci? [1/2/skip]"
+bash
+ssh
+docker-user@192.168.1.102
+"psql -c 'REINDEX TABLE vectors;'"
+python
+# Attendi 5 minuti
+time
+.
+sleep
+(
+300
+)
+# Re-query metriche
+new_avg
+=
+query_prometheus
+(
+.
+.
+.
+)
+if
+new_avg
+<
+1.0
+:
+print
+(
+"✅ Fixed! Latency dropped to"
+,
+new_avg
+,
+"s"
+)
+rate(api_requests_total{provider="claude"}[1h])
+python
+3.
+Azione preventiva:
+9. Gestione della Concorrenza
+9.1 Lock Distribuito via File Lock
+Problema Dettagliato
+Scenario:
+T0:
+Aider inizia: "Crea VM Redis" → Acquisisce lock
+T1:
+Open Interpreter: "Crea VM PostgreSQL" → Attende lock
+T2:
+Aider termina, rilascia lock
+T3:
+OI acquisisce lock, crea PostgreSQL
+Risultato:
+Sequenziale, no conflitti
+Senza lock:
+T0:
+Aider e OI partono simultaneamente
+T1:
+Entrambi leggono
+state.json
+(VM 100-104 esistenti)
+T2:
+Entrambi decidono: "Prossimo ID libero = 105"
+T3:
+Entrambi creano VM 105 →
+CONFLITTO
+Risultato:
+Una VM sovrascrive l'altra, o Proxmox rifiuta
+Implementazione Lock
+Tool:
+Python
+fcntl
+(POSIX file locking)
+Caratteristiche:
+requests_per_hour
+=
+45
+# Dal query
+hours_to_midnight
+=
+8
+projected_total
+=
+current_usage
++
+(
+requests_per_hour
+*
+hours_to_midnight
+)
+if
+projected_total
+>
+quota_limit
+:
+print
+(
+f"⚠️ Proiezione: esaurirai quota alle
+{
+estimated_time
+}
+"
+)
+"AI Orchestrator: Switching default provider to Gemini for next 4 hours to preserve Claude quota for critical tasks"
+redis.set('orchestrator:preferred_provider', 'gemini')
+redis.expire('orchestrator:preferred_provider', 14400) # 4 ore
+Advisory lock:
+Processo coopera volontariamente
+Exclusive lock:
+Solo un processo alla volta
+Atomico:
+Kernel garantisce atomicità
+Automatic release:
+Se processo crasha, kernel rilascia lock
+Context Manager:
+python
+@contextmanager
+def
+infrastructure_lock
+(
+operation
+,
+timeout
+=
+300
+)
+:
+lock_file
+=
+Path
+(
+"/tmp/nhi.lock"
+)
+lock_fd
+=
+None
+try
+:
+lock_file
+.
+touch
+(
+exist_ok
+=
+True
+)
+lock_fd
+=
+open
+(
+lock_file
+,
+'w'
+)
+# Scrivi metadata (chi ha lock, perché)
+lock_metadata
+=
+{
+"operation"
+:
+operation
+,
+"timestamp"
+:
+datetime
+.
+now
+(
+)
+.
+isoformat
+(
+)
+,
+"pid"
+:
+os
+.
+getpid
+(
+)
+,
+"user"
+:
+os
+.
+getenv
+(
+"USER"
+)
+}
+lock_fd
+.
+write
+(
+json
+.
+dumps
+(
+lock_metadata
+)
+)
+lock_fd
+.
+flush
+(
+)
+# Tenta acquisizione con timeout
+start
+=
+time
+.
+time
+(
+)
+while
+True
+:
+try
+:
+fcntl
+.
+flock
+(
+lock_fd
+,
+fcntl
+.
+LOCK_EX
+|
+fcntl
+.
+LOCK_NB
+)
+break
+# Lock acquisito
+except
+IOError
+:
+if
+time
+.
+time
+(
+)
+-
+start
+>
+timeout
+:
+raise
+TimeoutError
+(
+f"Cannot acquire lock after
+{
+timeout
+}
+s"
+)
+time
+.
+sleep
+(
+2
+)
+yield
+lock_fd
+finally
+:
+if
+lock_fd
+:
+fcntl
+.
+flock
+(
+lock_fd
+,
+fcntl
+.
+LOCK_UN
+)
+lock_fd
+.
+close
+(
+)
+Utilizzo nelle operazioni:
+Perché file lock invece di Redis lock:
+Simplicità:
+No dipendenze (Redis potrebbe essere down)
+Kernel-managed:
+Rilascio automatico se processo crasha
+Local-only:
+Sufficiente (tutte le AI passano per Brain VM)
+Quando Redis lock è migliore:
+Se in futuro hai multiple Brain VM (high availability), serve lock distribuito:
+9.2 Conflict Resolution Strategy
+Ottimistic Locking su state.json
+Scenario edge case:
+Due AI leggono
+state.json
+quasi simultaneamente (prima che lock si attivi), ma con lag di rete:
+python
+# Ogni script di modifica infra usa questo pattern
+with
+infrastructure_lock
+(
+"create_redis_vm"
+)
+:
+# Leggi state.json
+state
+=
+read_state
+(
+)
+# Modifica infra
+create_vm
+(
+.
+.
+.
+)
+# Aggiorna state.json
+run_infrastructure_scan
+(
+)
+# Lock rilasciato automaticamente
+python
+from
+redis
+import
+Redis
+r
+=
+Redis
+(
+)
+# Redlock algorithm
+lock
+=
+r
+.
+lock
+(
+"infrastructure_lock"
+,
+timeout
+=
+300
+)
+if
+lock
+.
+acquire
+(
+blocking
+=
+True
+,
+timeout
+=
+10
+)
+:
+try
+:
+# ... operazioni ...
+finally
+:
+lock
+.
+release
+(
+)
+1.
+T0:
+Aider legge state (checksum: ABC123)
+2.
+T1:
+OI legge state (checksum: ABC123)
+3.
+T2:
+Aider acquisisce lock, crea VM, scrive state (checksum: DEF456)
+4.
+T3:
+OI acquisisce lock, cerca di scrivere basandosi su ABC123 →
+CONFLITTO
+Soluzione: Compare-and-Swap (CAS)
+Prima di scrivere, verifica che checksum non sia cambiato:
+AI gestisce ConflictError:
+python
+def
+update_state_safe
+(
+new_state
+,
+expected_checksum
+)
+:
+with
+infrastructure_lock
+(
+"update_state"
+)
+:
+current_checksum
+=
+read_checksum
+(
+)
+if
+current_checksum
+!=
+expected_checksum
+:
+# Stato cambiato da quando l'hai letto!
+raise
+ConflictError
+(
+f"State changed (expected
+{
+expected_checksum
+}
+, "
+f"got
+{
+current_checksum
+}
+). Retry with fresh state."
+)
+# Safe to write
+write_state
+(
+new_state
+)
+python
+max_retries
+=
+3
+for
+attempt
+in
+range
+(
+max_retries
+)
+:
+try
+:
+state
+,
+checksum
+=
+read_state_with_checksum
+(
+)
+# ... modifica state ...
+update_state_safe
+(
+new_state
+,
+checksum
+)
+break
+# Success
+except
+ConflictError
+:
+if
+attempt
+==
+max_retries
+-
+1
+:
+raise
+print
+(
+f"Conflict detected, retry
+{
+attempt
++
+1
+}
+/
+{
+max_retries
+}
+"
+)
+time
+.
+sleep
+(
+random
+.
+uniform
+(
+1
+,
+3
+)
+)
+# Backoff randomizzato
+Perché backoff randomizzato:
+Se due AI ritentano simultaneamente con delay fisso, rischiano di collidere dinuovo. Random jitter previene sincronizzazione accidentale.
+9.3 Queue Prioritization
+Problema: Non Tutti i Task Sono Uguali
+Scenario:
+Antigravity: Autocomplete (latenza critica, utente attende)
+Aider: Bulk refactoring 50 file (può attendere)
+Open Interpreter: Deploy nuova VM (moderata urgenza)
+Se usiamo una sola coda FIFO:
+L'utente attende che 50 task Aider finiscano prima di vedere autocomplete → UX pessima.
+Soluzione: Priority Queues
+Redis List-based:
+Worker processa:
+Classificazione automatica:
+Queue: [Aider-task1, Aider-task2, ..., Aider-task50, Antigravity-autocomplete]
+gpu_queue:high → [Antigravity-autocomplete1, Antigravity-autocomplete2]
+gpu_queue:medium → [OI-deploy-vm]
+gpu_queue:low → [Aider-task1, Aider-task2, ..., Aider-task50]
+python
+while
+True
+:
+# Prova high priority prima
+task
+=
+redis
+.
+blpop
+(
+[
+'gpu_queue:high'
+,
+'gpu_queue:medium'
+,
+'gpu_queue:low'
+]
+,
+timeout
+=
+5
+)
+if
+task
+:
+queue_name
+,
+task_data
+=
+task
+priority
+=
+queue_name
+.
+split
+(
+':'
+)
+[
+1
+]
+print
+(
+f"Processing
+{
+priority
+}
+priority task"
+)
+process_task
+(
+task_data
+)
+Anti-starvation mechanism:
+Problema: Se arrivano continuamente task high priority, quelli low non verranno mai processati.
+Soluzione: Aging
+10. Roadmap di Implementazione
+10.1 Filosofia di Rollout Incrementale
+Principio:
+Non implementare tutto subito. Ogni fase deve essere
+funzionante e testata
+prima di passare allasuccessiva.
+Perché importante:
+python
+def
+route_task
+(
+task_type
+,
+source_ai
+)
+:
+# Regole euristiche
+if
+source_ai
+==
+"antigravity"
+and
+task_type
+==
+"autocomplete"
+:
+return
+"gpu_queue:high"
+if
+task_type
+in
+[
+"deploy"
+,
+"emergency_fix"
+]
+:
+return
+"gpu_queue:medium"
+return
+"gpu_queue:low"
+# Default: batch tasks
+python
+task_metadata
+=
+{
+"data"
+:
+task_data
+,
+"queued_at"
+:
+time
+.
+time
+(
+)
+,
+"promoted"
+:
+False
+}
+# Worker periodico (ogni 60s) controlla aging
+for
+task
+in
+redis
+.
+lrange
+(
+'gpu_queue:low'
+,
+0
+,
+-
+1
+)
+:
+metadata
+=
+json
+.
+loads
+(
+task
+)
+wait_time
+=
+time
+.
+time
+(
+)
+-
+metadata
+[
+'queued_at'
+]
+if
+wait_time
+>
+600
+and
+not
+metadata
+[
+'promoted'
+]
+:
+# 10 minuti
+# Promuovi a medium
+redis
+.
+lrem
+(
+'gpu_queue:low'
+,
+1
+,
+task
+)
+metadata
+[
+'promoted'
+]
+=
+True
+redis
+.
+rpush
+(
+'gpu_queue:medium'
+,
+json
+.
+dumps
+(
+metadata
+)
+)
+Debugging più facile (sai quale componente ha introdotto bug)
+Learning curve graduale (impari il sistema pezzo per pezzo)
+Motivazione sostenuta (vittorie rapide invece che progetto infinito)
+Fase 0: Setup Fondamentale (Week 1)
+Obiettivo:
+Infrastruttura base funzionante.
+Task 0.1: Proxmox Setup
+Installa Proxmox VE 8.x su MiniPC
+Configura networking (bridge vmbr0 su LAN)
+Crea storage LVM-thin per VM
+Setup HTTPS accesso web UI
+Crea utente API con token
+Validazione:
+Task 0.2: Brain VM Setup
+Crea VM 100 (Ubuntu Server 22.04)
+Alloca: 4 vCPU, 8GB RAM, 100GB disk
+Assegna IP statico 192.168.1.100
+Installa: Git, Python 3.11+, Redis, Docker
+Validazione:
+Task 0.3: Repository Monorepo
+Crea struttura cartelle come da blueprint
+Init Git repo
+bash
+# Test accesso API
+curl
+-k -H
+"Authorization: PVEAPIToken=ai_manager@pve!main=<token>"
+\
+https://192.168.1.10:8006/api2/json/nodes/pve-minipc/status
+bash
+ssh
+ai-agent@192.168.1.100
+python3 --version
+# >= 3.11
+redis-cli
+ping
+# PONG
+docker
+--version
+Crea .gitignore (escludi secrets/, *.pyc)
+Primo commit
+Setup remote GitHub (privato)
+Validazione:
+Deliverable:
+Brain VM funzionante con repository base.
+Fase 1: Il Sistema di Stato (Week 2)
+Obiettivo:
+Implementare infrastructure scanning e state.json.
+Task 1.1: Proxmox API Wrapper
+Prompt per AI:
+Validazione:
+Task 1.2: Infrastructure Scanner v1
+Prompt per AI:
+bash
+cd
+~/neural-home-repo
+tree -L
+2
+git
+remote -v
+# Mostra remote GitHub
+Crea un modulo Python `tools/discovery/proxmox_api.py` che:
+- Usa libreria `proxmoxer`
+- Legge credenziali da `secrets/secrets.vault.yml` (tramite ansible-vault)
+- Espone funzioni: list_vms(), get_vm_details(vmid), get_host_resources()
+- Gestisce errori (timeout, auth failure)
+- Testa con VM 100 (Brain)
+python
+from
+tools
+.
+discovery
+.
+proxmox_api
+import
+list_vms
+vms
+=
+list_vms
+(
+)
+assert
+len
+(
+vms
+)
+>=
+1
+# Almeno Brain VM
+print
+(
+vms
+[
+0
+]
+)
+# Mostra details VM 100
+Validazione:
+Task 1.3: State Validator
+Prompt per AI:
+Validazione:
+Task 1.4: Cron Automatico
+Setup cron per scan ogni 5 minuti
+Setup systemd timer (alternativa a cron, più robusto)
+Test: Attendi 5 minuti, verifica state.json updated
+Validazione:
+Crea `tools/core/infrastructure_scan.py` che:
+- Usa proxmox_api per ottenere lista VM/LXC
+- Per ogni VM: estrae nome, IP, status, risorse (CPU%, RAM MB)
+- Genera JSON con struttura come da blueprint (sezione 3.1)
+- Calcola SHA256 checksum
+- Salva in `infrastructure/state.json` e `infrastructure/state.json.checksum`
+- Esecuzione: `python3 infrastructure_scan.py`
+bash
+python3 tools/core/infrastructure_scan.py
+cat
+infrastructure/state.json
+|
+jq
+'.meta.checksum'
+cat
+infrastructure/state.json.checksum
+# Checksum devono matchare
+Crea `tools/core/state_validator.py` che:
+- Legge state.json e state.json.checksum
+- Calcola checksum del file JSON
+- Confronta con checksum salvato
+- Exit code 0 se valido, 1 se mismatch
+- JSON Schema validation (controlla presence di campi required)
+bash
+python3 tools/core/state_validator.py
+echo
+$?
+# 0
+# Modifica state.json manualmente
+python3 tools/core/state_validator.py
+echo
+$?
+# 1
+Deliverable:
+State.json si auto-aggiorna ogni 5 minuti.
+Fase 2: Le Mani (Remote Tools) - Week 3
+Obiettivo:
+Script per interagire con VM/LXC remote.
+Task 2.1: SSH Key Distribution
+Genera keypair SSH su Brain VM
+Distribuisci public key su tutte le VM/LXC future (tramite cloud-init template)
+Test passwordless SSH
+Validazione:
+Task 2.2: Remote Execution Tool
+Prompt per AI:
+Validazione:
+bash
+systemctl status infrastructure-scan.timer
+journalctl -u infrastructure-scan.service -n
+20
+bash
+ssh
+docker-user@192.168.1.101
+"echo test"
+# No password prompt
+Crea `tools/automation/remote_exec.sh` che:
+- Accetta argomenti: <target_host> <command>
+- Legge target_host da state.json (risolve nomi → IP)
+- Esegue comando via SSH
+- Cattura stdout/stderr
+- Exit code = exit code del comando remoto
+- Logging in `/var/log/nhi/remote_exec.log`
+Esempio uso:
+./remote_exec.sh chromadb-lxc "systemctl status chromadb"
+bash
+./tools/automation/remote_exec.sh brain-vm
+"uptime"
+# Output: uptime del Brain VM
+Task 2.3: Log Fetcher
+Prompt per AI:
+Validazione:
+Deliverable:
+AI può eseguire comandi remoti leggendo state.json.
+Fase 3: Integrazione AI Agents (Week 4)
+Obiettivo:
+Antigravity, Aider, OI possono leggere state.json.
+Task 3.1: Antigravity Context
+Sul PC Gaming, configura Antigravity per SSH verso Brain VM
+Crea
+.antigravity/context.md
+:
+Crea `tools/automation/fetch_logs.sh`:
+- Accetta: <service_name> <num_lines>
+- Risolve service_name → IP da state.json
+- Legge log via SSH (docker logs, journalctl, o file)
+- Output su stdout
+Esempio:
+./fetch_logs.sh chromadb-lxc 50
+bash
+./tools/automation/fetch_logs.sh brain-vm
+10
+# Mostra ultimi 10 log di systemd journal
+markdown
+Validazione:
+Task 3.2: Aider Custom Instructions
+Configura Aider con file
+.aider/rules.md
+identico concetto
+Task 3.3: Open Interpreter Profile
+Crea
+~/.config/open-interpreter/profile.yaml
+:
+#
+Neural-Home Infrastructure Context
+Questo repository gestisce un'infrastruttura distribuita.
+##
+REGOLA CRITICA
+Prima di OGNI operazione che coinvolge servizi remoti:
+1.
+Leggi
+`infrastructure/state.json`
+2.
+NON indovinare MAI IP o porte
+3.
+Usa sempre gli script in
+`tools/`
+per azioni remote
+##
+Esempio
+"Collega app a ChromaDB" → Leggi state.json → Trova IP 192.168.1.101 → Usa quello nel config.
+##
+File Chiave
+-
+`infrastructure/state.json`
+: SSOT dello stato sistema
+-
+`tools/`
+: Script per operazioni remote
+-
+`secrets/`
+: Credenziali (mai committare in chiaro)
+Apri Antigravity → Chiedi: "Qual è l'IP del servizio ChromaDB?"
+→ Deve leggere state.json e rispondere correttamente
+yaml
+Validazione:
+Deliverable:
+Tutte le AI usano state.json correttamente.
+Fase 4: Orchestratore AI (Week 5-6)
+Obiettivo:
+Routing intelligente richieste tra provider.
+Task 4.1: Rate Limiter
+Prompt per AI:
+Validazione:
+system_message
+:
+|
+Sei il system administrator dell'infrastruttura Neural-Home.
+REGOLE
+:
+-
+Leggi SEMPRE infrastructure/state.json prima di azioni remote
+-
+Usa script in tools/ invece di SSH diretto
+-
+Ogni modifica infrastrutturale
+:
+crea snapshot prima
+-
+Documenta in changelog.md
+TOOLS DISPONIBILI
+:
+-
+tools/core/infrastructure_scan.py
+-
+tools/automation/remote_exec.sh
+-
+tools/automation/fetch_logs.sh
+bash
+interpreter
+>
+"Mostrami lo stato di tutte le VM"
+[
+Deve usare state.json, non comandi SSH random
+]
+Crea `orchestrator/rate_limiter.py`:
+- Traccia quota su Redis (keys: api_quota:<provider>:YYYY-MM-DD)
+- Funzioni: increment_usage(provider), get_remaining(provider)
+- Auto-reset a mezzanotte UTC (via TTL Redis)
+- Config limiti in YAML:
+providers:
+claude: 1000
+gemini: 1500
+deepseek: 2000
+qwen: 5000
+Task 4.2: Request Router
+Prompt per AI:
+Validazione:
+Task 4.3: Integrazione con Aider/OI
+Wrapper che intercetta chiamate API
+Rerouta tramite orchestratore
+Test: Aider genera codice → usa orchestratore → incrementa quota
+Deliverable:
+Richieste AI distribuite tra provider.
+Fase 5: GPU Worker & Semaforo (Week 7)
+Obiettivo:
+GPU locale come fallback.
+Task 5.1: Setup Inference Engine
+Sul PC Gaming WSL2: Installa Ollama o Text Generation WebUI
+python
+from
+orchestrator
+.
+rate_limiter
+import
+increment_usage
+,
+get_remaining
+increment_usage
+(
+"claude"
+)
+assert
+get_remaining
+(
+"claude"
+)
+==
+999
+Crea `orchestrator/ai_router.py`:
+- Funzione: route_request(task_type, prompt) → (provider, endpoint)
+- Algoritmo scoring (come da blueprint sezione 4.2)
+- Legge quota da rate_limiter
+- Fallback su GPU se quota esaurita
+- Logging decisioni su PostgreSQL (tabella routing_log)
+python
+from
+orchestrator
+.
+ai_router
+import
+route_request
+provider
+,
+endpoint
+=
+route_request
+(
+"code_generation"
+,
+"Write a function..."
+)
+print
+(
+f"Routed to:
+{
+provider
+}
+"
+)
+# Simula esaurimento quota
+for
+i
+in
+range
+(
+1000
+)
+:
+increment_usage
+(
+"claude"
+)
+provider
+,
+_
+=
+route_request
+(
+"code_generation"
+,
+"..."
+)
+assert
+provider
+!=
+"claude"
+# Deve fallback
+Download modello Qwen2.5-32B-Instruct-GGUF
+Test endpoint:
+curl http://localhost:5000/v1/models
+Task 5.2: GPU Monitor Service
+Prompt per AI:
+Validazione:
+Task 5.3: GPU Queue Manager
+Prompt per AI:
+Validazione:
+Crea servizio Python `gpu_semaphore_monitor.py` (Windows/WSL):
+- Ogni 10s: leggi GPU stats (NVML), processi fullscreen (win32gui)
+- Calcola stato: GREEN/YELLOW/RED (logica da blueprint sezione 5.1)
+- Scrive su Redis: SET semaphore:gpu <stato>
+- Heartbeat: SETEX semaphore:gpu:heartbeat 30 "alive"
+- Esegue come servizio (systemd su WSL o Task Scheduler su Windows)
+bash
+# Su Brain VM
+redis-cli GET semaphore:gpu
+# Output: GREEN
+# Apri gioco su PC Gaming
+redis-cli GET semaphore:gpu
+# Output: RED
+Crea `orchestrator/gpu_queue_manager.py`:
+- Controlla semaforo prima di inviare richiesta
+- Se RED: accoda su gpu_queue:high/medium/low
+- Worker separato: processa queue quando GREEN
+- Timeout: 5 minuti in queue → errore
+python
+Deliverable:
+GPU usabile quando libera, code quando occupata.
+Fase 6: Observability Stack (Week 8-9)
+Obiettivo:
+Visibilità completa sistema.
+Task 6.1: Deploy Observability LXC
+Crea LXC 103 (6GB RAM, 100GB disk)
+Installa: Prometheus, Grafana, Loki
+Configura storage retention (30d metriche, 14d log)
+Task 6.2: Exporters Deployment
+Node Exporter su tutte VM/LXC
+Redis Exporter su Brain VM
+PostgreSQL Exporter (quando deploy DB)
+Custom GPU Exporter (legge da Redis semaforo)
+Task 6.3: Prometheus Configuration
+Prompt per AI:
+Task 6.4: Grafana Dashboards
+Importa dashboard "Node Exporter Full" (ID 1860)
+Crea custom "AI Orchestrator Monitor" (come da blueprint 8.1)
+# Simula GPU occupata
+redis
+.
+set
+(
+'semaphore:gpu'
+,
+'RED'
+)
+result
+=
+orchestrator
+.
+send_to_gpu
+(
+"Generate code..."
+)
+assert
+result
+==
+"QUEUED"
+# Libera GPU
+redis
+.
+set
+(
+'semaphore:gpu'
+,
+'GREEN'
+)
+# Worker processa automaticamente
+Genera prometheus.yml con scrape config per:
+- Proxmox VE Exporter (192.168.1.10:9221)
+- Node Exporters (192.168.1.100-104:9100)
+- Redis Exporter (192.168.1.100:9121)
+- GPU Exporter (192.168.1.50:9200)
+Scrape interval: 30s
+Crea custom "GPU Worker Status"
+Task 6.5: AlertManager Setup
+Prompt per AI:
+Validazione:
+Deliverable:
+Dashboard funzionanti, alert attivi.
+Fase 7: Backup & Disaster Recovery (Week 10)
+Obiettivo:
+Resilienza completa.
+Task 7.1: MinIO Deployment
+Crea LXC 104 (2GB RAM, 200GB disk dedicato)
+Installa MinIO
+Crea buckets: backups/infrastructure, backups/databases, backups/git-repos
+Task 7.2: Backup Scripts
+Prompt per AI:
+Configura AlertManager per:
+- Telegram bot notifications (usa secrets.vault.yml per token)
+- Email fallback (Gmail SMTP)
+- Routing rules: critical → Telegram + Email, warning → solo Telegram
+bash
+# Forza alert test
+curl
+-X POST http://192.168.1.103:9093/api/v1/alerts -d
+'[
+{
+"labels": {"alertname": "TestAlert", "severity": "critical"},
+"annotations": {"summary": "Test notification"}
+}
+]'
+# Controlla ricezione su Telegram
+Task 7.3: Proxmox Backup Server (Opzionale)
+Se hai NAS/USB esterno: Setup PBS
+Schedule snapshot settimanali VM/LXC
+Test restore
+Task 7.4: Runbook Documentazione
+Crea
+docs/RUNBOOK.md
+con procedure recovery per ogni scenario
+Test simulato: Destroy VM test, restore da backup
+Deliverable:
+Sistema sopravvive a failure di qualsiasi componente.
+Fase 8: Advanced Features (Week 11+)
+Opzionale, implementa se serve:
+Task 8.1: Dependency Graph
+Crea
+infrastructure/dependency_graph.json
+manualmente
+Tool per validare DAG (no cicli)
+Integra con manage_proxmox.py (check dipendenze prima distruzione)
+Task 8.2: Auto-Healing
+Prompt per AI:
+Crea script di backup:
+1. `backup_state.sh`:
+- Copia state.json → MinIO ogni ora
+- Retention: 7d orario, 30d giornaliero
+2. `backup_databases.sh`:
+- pg_dump PostgreSQL → MinIO
+- Export ChromaDB collections → MinIO
+- Daily 2 AM
+3. `backup_repo.sh`:
+- tar.gz monorepo → MinIO
+- Git push su GitHub
+- Daily 3 AM
+Task 8.3: Cost Tracker
+Se usi API a pagamento: implementa cost tracking (blueprint sezione 4.2)
+Dashboard Grafana con proiezioni mensili
+Task 8.4: Multi-Brain HA (Avanzato)
+Setup secondo Brain VM (failover)
+Sync state.json via Redis Sentinel o Raft consensus
+VIP (Virtual IP) per trasparenza failover
+11. Appendice: Alternative Technologies Considered
+11.1 Per Infrastructure State Management
+Opzione 1: Consul (HashiCorp)
+Pro:
+Service discovery built-in, KV store distribuito, health checks
+Contro:
+Cluster requirement (almeno 3 nodi), complessità setup, overhead memoria
+Verdetto:
+Overkill per single-node deployment
+Opzione 2: etcd
+Pro:
+Forte consistenza (Raft), watch API (real-time updates)
+Contro:
+Simile a Consul, richiede cluster per HA
+Verdetto:
+Troppo enterprise-grade
+Opzione 3: SQLite Database
+Pro:
+ACID transactions, query SQL potenti
+Contro:
+Concurrent writes problematici, schema rigido
+Verdetto:
+JSON file più flessibile per evoluzione schema
+Scelta finale: JSON + Redis
+JSON per persistenza (human-readable, versionabile Git)
+Crea `tools/automation/self_healing.py`:
+- Gira ogni 15 minuti
+- Legge alert da Prometheus
+- Per alert comuni (servizio down, disco pieno): esegue fix automatico
+- Esempio: Se PostgreSQL down → restart container
+- Log azioni + notifica Telegram
+Redis per runtime state (semaforo, code, cache)
+11.2 Per AI Orchestration
+Opzione 1: LangChain Router
+Pro:
+Framework maturo, molti provider supportati
+Contro:
+Overhead (importa mezzo ecosistema), opinionated
+Verdetto:
+Custom router più leggero e trasparente
+Opzione 2: LiteLLM Proxy
+Pro:
+Proxy unificato per tutti provider, load balancing built-in
+Contro:
+Layer extra (latenza), configurazione complessa
+Verdetto:
+Considerabile se scaling a 10+ provider
+Scelta finale: Custom Router
+Controllo totale logica routing
+Minimal dependencies
+Facile debugging
+11.3 Per Secrets Management
+Opzione 1: HashiCorp Vault
+Pro:
+Industry standard, audit logging, dynamic secrets
+Contro:
+Server sempre attivo (overhead), unsealing ceremony complesso
+Verdetto:
+Troppo per lab personale
+Opzione 2: SOPS (Mozilla)
+Pro:
+Encrypts values in YAML (keys visibili), KMS integration
+Contro:
+Meno diffuso di Ansible Vault
+Verdetto:
+Valida alternativa, sintassi preferenza
+Opzione 3: git-crypt
+Pro:
+Trasparente (auto-decrypt on checkout)
+Contro:
+Rischio commit accidentale file decrypted
+Verdetto:
+Comodo ma pericoloso
+Scelta finale: Ansible Vault
+Zero-config (parte di Ansible)
+Diffusissimo (documentazione abbondante)
+Singolo file criptato = meno errori
+11.4 Per Observability
+Opzione 1: ELK Stack (Elasticsearch, Logstash, Kibana)
+Pro:
+Potentissimo search, visualizzazioni rich
+Contro:
+Elasticsearch richiede 4-8GB RAM solo per sé
+Verdetto:
+Troppo pesante per MiniPC 32GB totali
+Opzione 2: VictoriaMetrics + Grafana
+Pro:
+Più performante di Prometheus (compressione migliore)
+Contro:
+Meno maturità, documentazione minore
+Verdetto:
+Considerabile se metriche > 100M serie
+Opzione 3: Datadog / New Relic (SaaS)
+Pro:
+Zero maintenance, UI bellissima
+Contro:
+$15-50/host/mese, vendor lock-in
+Verdetto:
+Non cost-free
+Scelta finale: Prometheus + Grafana + Loki
+Standard de-facto open source
+6GB RAM totali (accettabile)
+Integrazione nativa
+12. Conclusioni e Prossimi Passi
+12.1 Recap Architettura
+Hai ora un blueprint completo per un'infrastruttura AI
+autoconsapevole
+,
+cost-free
+e
+resiliente
+:
+Componenti Core:
+1.
+State.json
+: SSOT che elimina allucinazioni AI
+2.
+Orchestratore
+: Distribuisce carico tra API free tiers + GPU locale
+3.
+Lock Manager
+: Previene race condition tra AI concorrenti
+4.
+Observability
+: Visibilità completa per debugging e ottimizzazione
+5.
+Backup Multi-Layer
+: Recovery da qualsiasi disaster
+Benefici Chiave:
+✅ Zero costi operativi ricorrenti (tutto open source + free tier API)
+✅ AI collaborano senza conflitti
+✅ GPU gaming usabile quando non serve AI
+✅ Scalabile (aggiungi VM/LXC senza riscrivere codice)
+✅ Resiliente (backup automatici, self-healing)
+12.2 Metrica di Successo
+L'infrastruttura è
+production-ready
+quando:
+1.
+Test "Blind Operation":
+2.
+Test "Concurrent AI":
+3.
+Test "Disaster Recovery":
+Tu: "Crea un servizio MongoDB"
+AI: [Legge state.json] → [Trova slot libero] → [Crea LXC 106] →
+[Aggiorna state.json] → "MongoDB disponibile su 192.168.1.106:27017"
+# SENZA che tu debba specificare IP o configurazioni
+Terminal 1: Aider sta refactorando 50 file
+Terminal 2: Open Interpreter deploy nuova VM
+Terminal 3: Antigravity autocomplete attivo
+Risultato: Nessun conflitto, tutte le AI completano task
+4.
+Test "Cost Monitoring":
+5.
+Test "Zero Human Intervention":
+12.3 Evoluzioni Future (Post-MVP)
+Quando il sistema base è solido, considera queste estensioni:
+A. Multi-Region Resilience
+Problema:
+Casa brucia, perdi tutto hardware locale
+Soluzione:
+Replica Brain VM su VPS cloud (Hetzner €5/mese)
+State.json sincronizzato via Git ogni 5 minuti
+Se Brain locale down >10 minuti → Failover automatico su cloud
+GPU queue si svuota su API cloud fino a recovery
+B. Advanced RAG Pipeline
+# Distruggi Brain VM
+qm stop 100 && qm destroy 100
+# Restore da backup
+qmrestore /backup/vm-100-latest.vma.zst 100
+# Tempo totale: < 15 minuti
+# Sistema completamente funzionale dopo restore
+# Query Grafana
+sum(rate(api_requests_total[24h])) > 1000
+# Alert ricevuto su Telegram PRIMA di esaurire quota
+# GPU fallback attivato automaticamente
+# Lascia sistema in esecuzione 7 giorni
+# Controlli alla fine:
+- State.json aggiornato (168 scan completati)
+- Backup eseguiti (7 daily, 168 hourly state snapshots)
+- Alert funzionanti (test con servizio down simulato)
+- Nessun crash, nessun intervento manuale richiesto
+Problema:
+ChromaDB ha solo embeddings, no context reconstruction
+Soluzione:
+Hybrid retrieval
+ChromaDB: Semantic search (vettori)
+PostgreSQL + pg_trgm: Full-text search (keyword)
+Fusion re-ranking: Combina risultati
+Esempio: "Trova codice simile a bug X" → usa entrambi
+C. Agentic Workflows
+Problema:
+AI singole sono isolate, no collaboration
+Soluzione:
+Framework multi-agent (AutoGen/CrewAI)
+DevAgent:
+Scrive codice (Aider)
+OpsAgent:
+Gestisce infra (Open Interpreter)
+ReviewAgent:
+Code review (Claude Sonnet)
+Coordinator:
+Orchestrazione task complessi
+Comunicano via Redis Pub/Sub
+D. Continuous Learning
+Problema:
+AI ripetono errori passati
+Soluzione:
+Feedback loop
+Ogni operazione fallita → Log in PostgreSQL
+Periodicamente: "Analizza ultimi 100 errori, identifica pattern"
+Aggiorna system prompts con lessons learned
+Esempio: "Non usare DeepSeek per creative writing (10 failures), preferisci Claude"
+E. Cost Optimization ML
+Problema:
+Routing statico (scoring manuale)
+Soluzione:
+Reinforcement learning
+Features: task_type, time_of_day, quota_remaining, user_satisfaction
+Reward: -cost + quality_score - latency_penalty
+Model: Linear bandit o simple neural network
+Addestra su dati storici PostgreSQL routing_log
+12.4 Risorse e Learning Path
+Documentazione Ufficiale
+Proxmox:
+https://pve.proxmox.com/wiki/Main_Page
+Prometheus:
+https://prometheus.io/docs/
+Redis:
+https://redis.io/docs/
+Ansible Vault:
+https://docs.ansible.com/ansible/latest/vault_guide/
+Tutorial Consigliati
+1.
+Proxmox LXC Containers:
+TechnoTim YouTube channel
+2.
+Prometheus + Grafana:
+"Monitoring with Prometheus" (Julius Volz)
+3.
+AI Orchestration Patterns:
+LangChain documentation (concepts applicable)
+Community
+Proxmox Forum:
+https://forum.proxmox.com/
+Self-hosted Subreddit:
+r/selfhosted
+Homelab Discord:
+Per troubleshooting real-time
+12.5 Checklist Finale Pre-Production
+Prima di considerare il sistema "production":
+Sicurezza:
+Tutte le password in secrets.vault.yml (nessuna in chiaro)
+SSH key rotation plan (ogni 90 giorni)
+Proxmox API token con permessi minimi
+Firewall rules su Proxmox (block external access to management ports)
+2FA su Proxmox Web UI
+Resilienza:
+Backup testati (restore completo eseguito almeno 1 volta)
+Backup offsite configurato (MinIO → cloud S3)
+Alert funzionanti (ricevi notifiche Telegram)
+Runbook stampato e conservato (per recovery senza accesso digitale)
+Performance:
+State.json scan completa in <5 secondi
+Dashboard Grafana load in <2 secondi
+Orchestratore routing decision in <100ms
+GPU queue processing: <30s/request (modello 32B)
+Operatività:
+Documentazione aggiornata (README.md, ARCHITECTURE.md, RUNBOOK.md)
+Changelog manutenuto (ogni modifica infra tracciata)
+Audit log retention configurata (30 giorni PostgreSQL)
+Tutte le AI usano correttamente state.json (zero hardcoded IP)
+13. Glossario Tecnico
+SSOT (Single Source of Truth):
+Unico punto autoritativo per informazioni. Nel nostro caso,
+state.json
+.
+VMID:
+ID numerico univoco assegnato da Proxmox a ogni VM/LXC (es. 100, 101, 102).
+LXC (Linux Containers):
+Container OS-level, più leggeri delle VM (condividono kernel host).
+Thin Provisioning:
+Allocazione storage lazy (disco allocato solo quando scritto, non a creazione VM).
+PromQL:
+Linguaggio query di Prometheus per interrogare time-series.
+LogQL:
+Linguaggio query di Loki per interrogare log aggregati (simile a PromQL).
+Rate Limiting:
+Tecnica per limitare numero richieste in finestra temporale (es. 1000/giorno).
+Semaphore:
+Primitiva sincronizzazione per controllo accesso risorse condivise.
+Advisory Lock:
+Lock che richiede cooperazione processi (vs mandatory lock imposto dal kernel).
+Checksum (SHA256):
+Hash crittografico per verificare integrità dati (collision-resistant).
+Ansible Vault:
+Tool per criptare file contenenti secrets (parte ecosistema Ansible).
+PBS (Proxmox Backup Server):
+Software dedicato backup/restore VM Proxmox (deduplicazione,incremental).
+Node Exporter:
+Agent Prometheus per esporre metriche OS (CPU, RAM, disco, rete).
+DAG (Directed Acyclic Graph):
+Grafo orientato senza cicli (usato per dependency resolution).
+CAS (Compare-And-Swap):
+Operazione atomica: aggiorna valore solo se non cambiato da lettura.
+Pub/Sub:
+Pattern messaging dove publisher inviano messaggi a topic, subscriber ricevono notifiche.
+14. Troubleshooting Common Issues
+Issue 1: "State.json checksum mismatch"
+Sintomo:
+AI riporta errore validazione checksum.
+Cause possibili:
+1.
+Scan interrotto durante scrittura (power loss, kill -9)
+2.
+Modifica manuale file senza rigenerare checksum
+3.
+Disk corruption
+Debug:
+Issue 2: "Cannot acquire infrastructure lock (timeout)"
+Sintomo:
+Operazione infra blocca per 5 minuti poi fallisce.
+Cause:
+1.
+Altro processo ha lock e non rilascia (crash?)
+2.
+Lock file corrotto
+Debug:
+bash
+# Verifica integrità file
+python3 tools/core/state_validator.py --verbose
+# Se corrotto, restore snapshot recente
+cp
+infrastructure/state_history/state_
+$(
+date
++%Y-%m-%d_%H
+)
+-00.json infrastructure/state.json
+python3 tools/core/state_validator.py --regenerate-checksum
+bash
+# Controlla chi ha il lock
+cat
+/tmp/nhi.lock
+# Output: {"operation": "create_vm", "pid": 12345, "user": "ai-agent"}
+# Verifica se processo è ancora attivo
+ps
+aux
+|
+grep
+12345
+# Se processo morto, rimuovi lock manuale
+rm
+/tmp/nhi.lock
+Issue 3: "GPU semaphore stuck in RED"
+Sintomo:
+GPU mostra sempre RED anche se idle.
+Cause:
+1.
+Servizio monitor crashato (heartbeat scaduto)
+2.
+Redis key corrotta
+Debug:
+Issue 4: "API quota showing negative remaining"
+Sintomo:
+Orchestratore dice "Claude remaining: -50".
+Cause:
+1.
+Redis counter non resettato a mezzanotte
+2.
+Multiple AI incrementano simultaneamente senza lock
+Debug:
+bash
+# Su Brain VM, controlla heartbeat
+redis-cli TTL semaphore:gpu:heartbeat
+# Se -2 (key non esiste), monitor è down
+# Su PC Gaming, controlla servizio
+systemctl status gpu-semaphore-monitor
+# (se systemd)
+# Restart se necessario
+systemctl restart gpu-semaphore-monitor
+# Reset manuale stato
+redis-cli SET semaphore:gpu GREEN
+bash
+Issue 5: "Grafana shows no data"
+Sintomo:
+Dashboard vuote o "No data".
+Debug checklist:
+15. Contributi e Manutenzione
+15.1 Come Contribuire al Progetto
+Se condividi questo progetto (GitHub pubblico):
+Segnalare Bug:
+1.
+Verifica issue esistente
+2.
+Fornisci: versione software, log completi, step riproduzione
+# Verifica chiave Redis
+redis-cli HGETALL api_quota:claude:
+$(
+date
++%Y-%m-%d
+)
+# Controlla requests_made vs limite configurato
+# Reset manuale (se data corretta)
+redis-cli DEL api_quota:claude:
+$(
+date
++%Y-%m-%d
+)
+# Verifica cron job reset (dovrebbe girare 00:01 UTC)
+crontab
+-l
+|
+grep
+api_quota
+bash
+# 1. Prometheus raggiungibile?
+curl
+http://192.168.1.103:9090/-/healthy
+# Expected: {"status":"success"}
+# 2. Targets up?
+curl
+http://192.168.1.103:9090/api/v1/targets
+|
+jq
+'.data.activeTargets[] | select(.health != "up")'
+# 3. Datasource configurata in Grafana?
+# UI: Configuration → Data Sources → Prometheus
+# URL dovrebbe essere: http://localhost:9090
+# 4. Query funziona in Prometheus UI?
+# http://192.168.1.103:9090/graph
+# Test query: up{job="node-exporter"}
+3.
+Tag:
+bug
+,
+help-wanted
+Proporre Feature:
+1.
+Apri discussion prima di PR
+2.
+Spiega: problema risolto, perché attuale soluzione insufficiente
+3.
+Considera impatto: performance, complessità, dipendenze
+Pull Request:
+1.
+Forka repository
+2.
+Branch:
+feature/nome-feature
+o
+fix/nome-bug
+3.
+Test su infra locale prima di PR
+4.
+Documenta in CHANGELOG.md
+15.2 Manutenzione Periodica
+Settimanale:
+Controlla dashboard Grafana per anomalie
+Verifica backup completati (MinIO storage usage)
+Review audit log (operazioni inusuali?)
+Mensile:
+Aggiorna software (apt upgrade su VM/LXC)
+Rotazione log (cleanup vecchi >30 giorni)
+Test restore backup (almeno 1 VM)
+Review quota usage trend (API providers)
+Trimestrale:
+Aggiorna Proxmox VE (major version se stabile)
+SSH key rotation
+Dependency graph review (servizi aggiunti/rimossi?)
+Performance audit (query lente PostgreSQL?)
+Conclusione
+Hai ora una
+architettura completa e dettagliata
+per costruire un'infrastruttura AI autoconsapevole, resiliente ecost-free.
+Next Steps Immediati:
+1.
+Salva questo documento
+come
+ARCHITECTURE.md
+nella root del tuo repository
+2.
+Inizia dalla Fase 0
+(Setup fondamentale) della roadmap
+3.
+Usa le AI per implementare
+ogni task, fornendo sezioni rilevanti di questo documento come context
+4.
+Documenta deviazioni
+nel CHANGELOG.md (se scegli soluzioni diverse)
+Filosofia Finale:
+"L'infrastruttura migliore è quella che si gestisce da sola, costa zero, e sopravvive ai tuoi errori."
+Questo blueprint ti porta esattamente lì. Buona costruzione! 🚀
+Domande?
+Consulta sezione Troubleshooting o Community Resources.
+Aggiornamenti?
+Questo documento evolve con il progetto. Versione corrente: 3.0 (Gennaio 2026).

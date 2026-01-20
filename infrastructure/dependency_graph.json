@@ -1,0 +1,46 @@
+{
+  "services": {
+    "brain-vm": {
+      "depends_on": [],
+      "required_by": [
+        "chromadb-lxc",
+        "postgres-lxc",
+        "observability-lxc",
+        "minio-lxc"
+      ],
+      "criticality": "critical",
+      "can_restart_without_approval": false
+    },
+    "chromadb-lxc": {
+      "depends_on": [
+        "brain-vm"
+      ],
+      "required_by": [
+        "frontend-app"
+      ],
+      "criticality": "high",
+      "can_restart_without_approval": false
+    },
+    "postgres-lxc": {
+      "depends_on": [
+        "brain-vm"
+      ],
+      "required_by": [
+        "grafana",
+        "webapp",
+        "log-processor"
+      ],
+      "criticality": "critical",
+      "can_restart_without_approval": false
+    },
+    "minio-lxc": {
+      "depends_on": [
+        "brain-vm"
+      ],
+      "required_by": [],
+      "criticality": "medium",
+      "can_restart_without_approval": true,
+      "restart_safe_hours": [2, 3, 4]
+    }
+  }
+}

@@ -1,0 +1,7 @@
+[Unit]
+Description=NHI Infrastructure Scanner
+
+[Service]
+Type=oneshot
+User=s3ph1r
+ExecStart=/home/s3ph1r/neural-home-repo/venv/bin/python3 /home/s3ph1r/neural-home-repo/tools/core/infrastructure_scan.py

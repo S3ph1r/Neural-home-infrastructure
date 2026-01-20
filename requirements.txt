@@ -1,0 +1,8 @@
+proxmoxer
+requests
+python-dotenv
+fastapi
+uvicorn
+redis
+openai
+google-genai

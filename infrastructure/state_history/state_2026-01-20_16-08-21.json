@@ -1,0 +1,105 @@
+{
+  "meta": {
+    "generated_at": "2026-01-20T16:08:20.998657",
+    "generated_by": "infrastructure_scan.py",
+    "checksum_validation": "See state.json.checksum",
+    "scan_duration_ms": 286
+  },
+  "infrastructure": {
+    "nodes": [
+      {
+        "cpu": 0.00511255875319535,
+        "mem": 5248655360,
+        "ssl_fingerprint": "94:3B:A7:CC:BE:28:E1:0D:C1:7C:01:EF:A7:F1:50:6C:14:38:33:80:14:40:E0:0A:56:18:F7:05:6F:3D:98:DB",
+        "maxcpu": 12,
+        "maxmem": 32514097152,
+        "id": "node/homelab",
+        "uptime": 297919,
+        "maxdisk": 100861726720,
+        "node": "homelab",
+        "level": "",
+        "status": "online",
+        "type": "node",
+        "disk": 6891610112
+      }
+    ],
+    "vms": [
+      {
+        "cpus": 4,
+        "netout": 274705312,
+        "vmid": 100,
+        "pressurecpufull": 0,
+        "status": "running",
+        "pid": 742911,
+        "cpu": 0.0173565298516278,
+        "disk": 0,
+        "memhost": 3031037952,
+        "maxdisk": 107374182400,
+        "pressurememoryfull": 0,
+        "pressurecpusome": 0,
+        "pressureiosome": 0,
+        "pressureiofull": 0,
+        "uptime": 22214,
+        "maxmem": 8589934592,
+        "mem": 3031037952,
+        "netin": 68628213,
+        "name": "docker-host",
+        "pressurememorysome": 0,
+        "node": "homelab",
+        "ip_addresses": [
+          "192.168.1.20",
+          "172.18.0.1",
+          "172.19.0.1",
+          "172.17.0.1"
+        ]
+      }
+    ],
+    "lxcs": [],
+    "endpoints": {},
+    "health_checks": {}
+  },
+  "projects": [
+    {
+      "id": "ai-orchestrator",
+      "name": "AI Orchestrator",
+      "path": "~/Projects/ai-orchestrator",
+      "status": "Produzione (Systemd: `nhi-orchestrator.service`)",
+      "description": "Centralizza le chiamate AI. Funge da gateway unificato compatibile con OpenAI.\nGestisce il routing intelligente tra Cloud (Qwen/Google) e Locale (Ollama) basandosi su Redis.",
+      "interfaces": {
+        "port": 8000,
+        "base_url": "http://localhost:8000/v1"
+      },
+      "raw_manifest": "# PROGETTO: AI Orchestrator\n**Path:** `~/Projects/ai-orchestrator`\n**Stato:** Produzione (Systemd: `nhi-orchestrator.service`)\n\n## \ud83c\udfaf Scopo\nCentralizza le chiamate AI. Funge da gateway unificato compatibile con OpenAI.\nGestisce il routing intelligente tra Cloud (Qwen/Google) e Locale (Ollama) basandosi su Redis.\n\n## \ud83d\udd0c Interfacce (API)\n- **Base URL:** `http://localhost:8000/v1`\n- **Porta:** 8000\n- **Endpoint Chiave:**\n  - `POST /chat/completions`: Generazione testo (supporta streaming).\n  - `GET /models`: Lista modelli fittizia per compatibilit\u00e0.\n\n## \ud83d\udee0\ufe0f Stack Tecnologico\n- Python (FastAPI)\n- Redis (Key: `gpu_status` per semaforo, `stats:*` per metriche).\n\n## \u26a0\ufe0f Note per Sviluppatori\n- Non bypassare questo servizio per le chiamate AI.\n- Se `gpu_status` in Redis \u00e8 \"ROSSO\", le chiamate locali vengono rifiutate o deviate.\n"
+    }
+  ],
+  "api_providers": {
+    "ollama": {
+      "id": "ollama",
+      "name": "GPU Locale (RTX)",
+      "url": "http://192.168.1.139:11434/v1",
+      "model": "qwen2.5:14b-instruct-q6_K",
+      "type": "openai"
+    },
+    "qwen_cloud": {
+      "id": "qwen_cloud",
+      "name": "Alibaba Qwen Max",
+      "url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-max",
+      "type": "openai"
+    },
+    "gemini-flash": {
+      "id": "gemini-flash",
+      "name": "Gemini 2.5 Flash",
+      "model": "gemini-2.0-flash",
+      "type": "google"
+    },
+    "groq": {
+      "id": "groq",
+      "name": "Groq (Llama 3.3)",
+      "url": "https://api.groq.com/openai/v1",
+      "model": "llama-3.3-70b-versatile",
+      "type": "openai"
+    }
+  },
+  "alerts": []
+}

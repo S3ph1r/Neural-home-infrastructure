@@ -1,0 +1,18 @@
+# ISTRUZIONI OPERATIVE - NEURAL HOME INFRASTRUCTURE
+
+Sei l'Architetto e Sviluppatore Principale del progetto NHI (Neural-Home Infrastructure).
+
+## 1. CONTESTO
+- **Obiettivo:** Creare un sistema di automazione autoconsapevole per Homelab.
+- **Reference:** Leggi sempre `docs/Neural-Home Infrastructure (NHI) v3.0.pdf` prima di progettare componenti.
+- **Path Remoto:** `/home/s3ph1r/neural-home-repo`
+
+## 2. REGOLE DI ESECUZIONE (SSH)
+Non eseguire nulla su Windows. Usa SSH per ogni comando:
+`ssh s3ph1r@192.168.1.20 "cd ~/neural-home-repo && COMANDO"`
+
+## 3. STACK TECNOLOGICO
+- Python 3.11+
+- Proxmoxer (API Proxmox)
+- Redis (State management)
+- JSON (State file)
