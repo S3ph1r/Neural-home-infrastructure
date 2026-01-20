@@ -13,6 +13,8 @@ from openai import OpenAI
 from google import genai
 from google.genai import types
 from .rate_limiter import RateLimiter
+from prometheus_fastapi_instrumentator import Instrumentator, metrics
+from prometheus_client import Gauge
 
 # --- CONFIGURAZIONE ---
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -82,6 +84,38 @@ app = FastAPI()
 r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 limiter = RateLimiter(r)
 google_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+
+# --- METRICHE CUSTOM ---
+gpu_gauge = Gauge('neural_home_gpu_status', 'GPU Status: 1=Green (Available), 0=Red (Busy/Cooldown)')
+limit_gauge = Gauge('neural_home_rate_limit_remaining', 'Remaining tokens/requests', ['provider', 'type'])
+
+# Instrument globally (Middleware must be added here)
+instrumentator = Instrumentator().instrument(app)
+
+@app.middleware("http")
+async def update_metrics_on_scrape(request: Request, call_next):
+    # Update Gauge ONLY when Prometheus scrapes
+    if request.url.path == "/metrics":
+        try:
+            status = r.get("gpu_status")
+            val = 1 if status and status == "VERDE" else 0
+            gpu_gauge.set(val)
+        except Exception:
+            pass
+    return await call_next(request)
+
+@app.on_event("startup")
+async def startup():
+    # Expose endpoint
+    instrumentator.expose(app)
+    
+    # Init GPU Metric
+    try:
+        status = r.get("gpu_status")
+        gpu_gauge.set(1 if status == "VERDE" else 0)
+        print("📊 Metrics Initialized: GPU Status synced.")
+    except Exception as e:
+        print(f"⚠️ Metrics Init Failed: {e}")
 
 current_mode = "AUTO"
 manual_target_id = None
@@ -173,6 +207,7 @@ async def chat_proxy(request: Request):
 
     # 3. Decisione Hardware
     gpu_on = (r.get("gpu_status") == "VERDE")
+    gpu_gauge.set(1 if gpu_on else 0) # Update Metric
     sane_list = get_sane_providers(gpu_on)
     
     if current_mode == "MANUAL":

@@ -6,3 +6,5 @@ uvicorn
 redis
 openai
 google-genai
+prometheus-fastapi-instrumentator
+prometheus-fastapi-instrumentator
