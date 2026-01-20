@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Safety Configuration
-CRITICAL_VMS = [100, 101, 102, 103] # Brain, Chroma, Postgres, Observability
+CRITICAL_VMS = [100] # Brain only (others are being built)
 SAFE_MODE = True
 
 class ProxmoxManager:
@@ -66,35 +66,89 @@ class ProxmoxManager:
             logger.error(f"FAILED: {e}")
             return False
 
+            logger.error(f"FAILED LXC CREATION: {e}")
+            return False
+
     def destroy_vm(self, node, vmid):
-        logger.info(f"REQUEST: Destroy VM {vmid} on {node}")
+        logger.info(f"REQUEST: Destroy Resource {vmid} on {node}")
         
         if int(vmid) in CRITICAL_VMS:
-            logger.error(f"CRITICAL SAFETY STOP: Attempted to destroy protected VM {vmid}!")
+            logger.error(f"CRITICAL SAFETY STOP: Attempted to destroy protected Resource {vmid}!")
             return False
 
         if self.dry_run:
-            logger.info(f"[DRY-RUN] Would execute: Stop VM {vmid}, Destroy VM {vmid}")
+            logger.info(f"[DRY-RUN] Would destroy {vmid}")
             return True
 
         try:
-            # 1. Stop if running
+            # Try QEMU first
             try:
-                status = self._get_node(node).qemu(vmid).status.current.get()
-                if status['status'] == 'running':
-                    logger.info("Stopping VM...")
-                    self._get_node(node).qemu(vmid).status.stop.post()
-                    time.sleep(10) # Wait for shutdown
+                self._get_node(node).qemu(vmid).status.stop.post()
+                time.sleep(5)
+                self._get_node(node).qemu(vmid).delete()
+                logger.info(f"SUCCESS: VM {vmid} destroyed.")
+                return True
             except Exception:
-                pass # Maybe doesn't exist or already stopped
+                # Try LXC
+                try:
+                    self._get_node(node).lxc(vmid).status.stop.post()
+                    time.sleep(5)
+                except: pass
+                
+                self._get_node(node).lxc(vmid).delete()
+                logger.info(f"SUCCESS: LXC {vmid} destroyed.")
+                return True
+                
+        except Exception as e:
+            logger.error(f"FAILED DESTROY: {e}")
+            return False
 
-            # 2. Destroy
-            logger.info("Destroying VM...")
-            self._get_node(node).qemu(vmid).delete()
-            logger.info(f"SUCCESS: VM {vmid} destroyed.")
+    def create_lxc(self, node, vmid, name, ostemplate, cores=2, memory=2048, password="password", ip="dhcp", ssh_key=None):
+        logger.info(f"REQUEST: Create LXC {vmid} ({name}) using {ostemplate} IP={ip}")
+        
+        if int(vmid) in CRITICAL_VMS:
+            logger.error(f"ABORTING: Cannot overwrite critical ID {vmid}")
+            return False
+
+        if self.dry_run:
+            logger.info(f"[DRY-RUN] Would create LXC {vmid} with {ostemplate}")
+            return True
+
+        try:
+            logger.info("Creating LXC Container...")
+            
+            # Formatting network string
+            net_config = f"name=eth0,bridge=vmbr0,ip={ip}"
+            if ip != "dhcp":
+                if "/" not in ip:
+                   net_config += "/24"
+                # Add Gateway (Hardcoded for now based on subnet standard)
+                net_config += ",gw=192.168.1.1"
+                
+            # Basic LXC creation
+            params = {
+                "vmid": vmid,
+                "hostname": name,
+                "ostemplate": ostemplate,
+                "cores": cores,
+                "memory": memory,
+                "password": password,
+                "rootfs": "local-lvm:10",
+                "net0": net_config,
+                "features": "nesting=1",
+                "start": 1
+            }
+            
+            if ssh_key:
+                # Proxmox API expects URL-encoded key usually, but library might handle it.
+                # However, the key argument is usually 'ssh-public-keys'
+                params["ssh-public-keys"] = ssh_key
+
+            self._get_node(node).lxc.create(**params)
+            logger.info(f"SUCCESS: LXC {name} ({vmid}) started.")
             return True
         except Exception as e:
-            logger.error(f"FAILED: {e}")
+            logger.error(f"FAILED LXC CREATION: {e}")
             return False
 
 def main():
@@ -114,6 +168,11 @@ def main():
     create_parser.add_argument("--name", required=True, help="New VM Name")
     create_parser.add_argument("--cores", type=int, default=2, help="CPU Cores")
     create_parser.add_argument("--memory", type=int, default=2048, help="RAM in MB")
+    create_parser.add_argument("--type", choices=["vm", "lxc"], default="vm", help="Resource Type")
+    create_parser.add_argument("--ostemplate", help="OS Template for LXC (e.g., local:vztmpl/ubuntu-22.04.tar.gz)")
+    create_parser.add_argument("--ip", default="dhcp", help="IP Address (e.g. 192.168.1.103/24) or 'dhcp'")
+    create_parser.add_argument("--password", default="password", help="Root password for LXC")
+    create_parser.add_argument("--ssh-key", help="Public SSH Key to inject")
 
     # Destroy
     destroy_parser = subparsers.add_parser("destroy", help="Destroy a VM")
@@ -126,7 +185,13 @@ def main():
     if args.command == "list":
         manager.list_vms(args.node)
     elif args.command == "create":
-        manager.create_vm(args.node, args.template_id, args.new_id, args.name, args.cores, args.memory)
+        if args.type == "vm":
+            manager.create_vm(args.node, args.template_id, args.new_id, args.name, args.cores, args.memory)
+        elif args.type == "lxc":
+            if not args.ostemplate:
+                print("Error: --ostemplate is required for LXC creation")
+            else:
+                manager.create_lxc(args.node, args.new_id, args.name, args.ostemplate, args.cores, args.memory, args.password, args.ip, args.ssh_key)
     elif args.command == "destroy":
         manager.destroy_vm(args.node, args.vmid)
     else:
